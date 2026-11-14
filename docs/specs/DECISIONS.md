@@ -22,7 +22,7 @@ Current decisions, grouped by topic. Each item is what holds now. IDs in bracket
 - [A17] Readable scopes: Margaret (recall only) and family both read `family` and `caregiver`; a caregiver reads `caregiver`. Nothing is private only to Margaret.
 - [R22] A writer's response never includes `proposed_supersedes`, `message`, or candidates for a memory outside that writer's readable scopes.
 - [A12] Any family member (role `family`, including the admin) can verify, deny, confirm a supersede, and correct. Caregivers cannot; their writes stay unverified until a family member reviews them.
-- [A13] The admin's only extra power is managing household members (`POST /users` in `backend/`, already `requireFamilyAdmin`).
+- [A13] The admin's only extra power is managing household members (the old `backend/` `POST /users` was removed when the user service moved into Next.js; rebuild it in `client/` when needed).
 - [D2] People never classify; they only confirm or deny. The system classifies.
 - [A2] `correct` stays as an endpoint: a family member creates a new re-embedded memory that supersedes the old one; a caregiver correction goes through the normal unverified + review path.
 - [A15] The add response and each review card show the author as `from: {name, role}` (for example "from: Ravi (caregiver)").
@@ -72,7 +72,7 @@ Current decisions, grouped by topic. Each item is what holds now. IDs in bracket
 - Event: MongoDB "Agents in Context" Toronto hackathon, Memory You Can Govern track. Submissions due Nov 14 2026, 5 pm ET. Required: ElevenLabs, the provisioned MongoDB Atlas cluster, a 1-minute demo video. Banned: Streamlit, dashboard as the main feature, medical advice, basic RAG.
 - Source of truth: `main` at 2cdf56c (REVIEW-002). Behaviour is specified in `SPEC-memory.md`; this file logs the decisions; the work split is in `WORKSPLIT.md`.
 - [A9] All memory logic lives in the Next.js client (`client/lib`, `/api` routes, dashboard actions). There is no separate memory-service.
-- Stack: MongoDB Atlas + Atlas Vector Search; Voyage AI (voyage-3.5, rerank-2.5); ElevenLabs; the user service in `backend/` is Node/TypeScript (Fastify).
+- Stack: MongoDB Atlas + Atlas Vector Search; Voyage AI (voyage-3.5, rerank-2.5); ElevenLabs; accounts and login live in the Next.js app (`client/lib/users.ts`); the separate Fastify service was removed so it deploys as one Next.js project.
 - [A8] Mica owns the project spec. The ElevenLabs integration is built by another teammate from the spec, so the tool contract above must stay complete and standalone.
 - [R9] Scenario tests run against `MONGODB_DB=keepsake_test` with its own `memory_vec` index, never the demo DB. `seed.py` upserts demo logins into `people`.
 - [D3] The MVP has no leakage test.
