@@ -1,0 +1,13 @@
+{
+  "name": "memory_vec",
+  "type": "vectorSearch",
+  "collection": "memories",
+  "definition": {
+    "fields": [
+      { "type": "vector", "path": "embedding", "numDimensions": 1024, "similarity": "cosine" },
+      { "type": "filter", "path": "person_id" },
+      { "type": "filter", "path": "scope" },
+      { "type": "filter", "path": "status" }
+    ]
+  }
+}
