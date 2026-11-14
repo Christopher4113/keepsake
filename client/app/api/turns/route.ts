@@ -1,10 +1,10 @@
-import { getSession } from "@/lib/auth";
+import { getMemberSession } from "@/lib/auth";
 import { apiError } from "@/lib/http";
 import { canViewTrace, listTurns } from "@/lib/turns";
 
 // The trace list, newest first. Family only (D-A2). Contract: docs/api-reads.yaml.
 export async function GET(req: Request) {
-  const s = await getSession();
+  const s = await getMemberSession();
   if (!s) return apiError("unauthorized", "Sign in required");
   if (!canViewTrace(s)) return apiError("forbidden", "Only family can view the trace");
 
