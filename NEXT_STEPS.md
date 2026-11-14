@@ -61,3 +61,19 @@ Trace each turn and replay run. Judges not see in 1 min video. Last.
 - schema validation on enums
 - bounded arrays only, no unbounded growth in one doc
 - no secrets in repo, `.env` ignored
+
+## Caregiver trace access
+
+Trace is family only (D-A2). Caregivers could see a turn when every result is caregiver scope, with the answer hidden otherwise.
+
+## Household timezone
+
+`today` is computed in America/Toronto for every household (D-A5). Add `timezone` to households and use it in `lib/time.ts`.
+
+## Turns retention
+
+`turns` has no TTL. Decide retention, or move it to a time-series collection (see Time series for logs).
+
+## Drop LangChain
+
+Recall no longer uses `@langchain/core` or `@langchain/mongodb`. Remove them from `client/package.json`.

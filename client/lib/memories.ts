@@ -1,6 +1,6 @@
 import { ObjectId } from "mongodb";
 import { getDb } from "./db";
-import { embeddings, memoryStore } from "./vectorstore";
+import { embed as voyageEmbed } from "./voyage";
 import type { Role, Session } from "./auth";
 
 export type Scope = "private" | "family" | "caregiver";
@@ -30,30 +30,10 @@ export async function audit(
   });
 }
 
-export type Recalled = { text: string; scope: Scope; status: string };
-
-// Role-scoped retrieval. The scope filter runs inside $vectorSearch (preFilter), never after it.
-export async function recall(s: Session, query: string, k = 5): Promise<Recalled[]> {
-  const filter = { person_id: s.person_id, scope: { $in: SCOPES[s.role] }, status: { $in: ["verified", "unverified"] } };
-  try {
-    const hits = await (await memoryStore()).similaritySearchWithScore(query, k, { preFilter: filter });
-    if (hits.length) return hits.map(([d]) => ({ text: d.pageContent, scope: d.metadata.scope, status: d.metadata.status }));
-  } catch (e) {
-    console.warn("vector search unavailable, using keyword fallback:", (e as Error).message);
-  }
-  // ponytail: keyword OR-match fallback while the Atlas index builds or embeddings are missing.
-  const words = query.toLowerCase().match(/[a-z']{4,}/g) ?? [];
-  if (!words.length) return [];
-  const rx = new RegExp(words.map((w) => w.replace(/[^a-z']/g, "")).join("|"), "i");
-  const docs = await (await getDb()).collection("memories")
-    .find({ ...filter, text: rx }, { projection: { text: 1, scope: 1, status: 1 } }).limit(k).toArray();
-  return docs.map((d) => ({ text: d.text, scope: d.scope, status: d.status }));
-}
-
-// Best effort: a Voyage failure leaves embedding [] (regex fallback still finds it) instead of losing the write.
+// Best effort: a Voyage failure leaves embedding [] instead of losing the write. scripts/setup-vectors.mjs backfills it.
 export async function embed(id: ObjectId, text: string) {
   try {
-    const [vec] = await embeddings.embedDocuments([text]);
+    const [vec] = await voyageEmbed([text], "document");
     await (await getDb()).collection("memories").updateOne({ _id: id }, { $set: { embedding: vec } });
   } catch (e) {
     console.error("embed failed", id.toString(), e);

@@ -29,6 +29,12 @@ Voyage usage: `voyage-3.5` with `input_type="document"` for stored memories and 
 
 The admin never classifies. They approve or deny the override the system proposed.
 
+## Turns
+
+`turns` holds one doc per recall: the question, a snapshot of the memories the agent was given (text, status, scope, author, scores), the cutoff in force, whether search degraded, and the agent's spoken answer. The trace screen reads it, newest first (`{person_id: 1, at: -1}`).
+
+Private memories are stored by id and scores only, with no text, and their turn keeps no answer. Family reads the trace, and family can't read private.
+
 ## Users and roles
 
 - `people` is auth only: `user_id`, `name`, `email`, `password_hash`, with unique indexes on `user_id` and `email`. `schema.js` never drops it.
@@ -37,7 +43,7 @@ The admin never classifies. They approve or deny the override the system propose
 
 ## Schema versions
 
-Every doc in `memories`, `households`, `people` and `audit_log` has `schema_version` (int). The validators require it. A doc without it is v0, from before versioning.
+Every doc in `memories`, `households`, `people`, `audit_log` and `turns` has `schema_version` (int). The validators require it. A doc without it is v0, from before versioning.
 
 All collections are on version 1. When a collection's shape changes:
 
@@ -45,4 +51,4 @@ All collections are on version 1. When a collection's shape changes:
 2. Add a migration in `db/migrations/` that upgrades old docs and runs `collMod`. Don't drop the collection, because that deletes the vector index.
 3. Code that reads a doc checks `schema_version` and handles older versions until the migration has run.
 
-Migrations so far: `001_review.js` (review subdoc), `002_people_auth.js` (people is auth only), `003_schema_version.js` (adds the field and stamps existing docs as v1).
+Migrations so far: `001_review.js` (review subdoc), `002_people_auth.js` (people is auth only), `003_schema_version.js` (adds the field and stamps existing docs as v1), `004_binary_review_no_ttl.js` (binary supersedes, no TTL), `005_turns.js` (the turns collection).
