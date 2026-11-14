@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   if (s?.role !== "person") return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const text = String(body.text ?? "").trim().slice(0, 1000);
+  const text = typeof body.text === "string" ? body.text.trim().slice(0, 1000) : "";
   const isPrivate = body.private === true;
   if (!text) return Response.json({ error: "text is required" }, { status: 400 });
 

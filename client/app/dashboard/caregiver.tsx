@@ -1,17 +1,26 @@
+import { CheckCircle2, Clock, Hourglass, NotebookPen } from "lucide-react";
 import type { Session } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { visibleTo } from "@/lib/memories";
+import { cn } from "@/lib/utils";
+import { Logo } from "@/components/logo";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { LogoutButton } from "../logout-button";
 import { addMemory } from "./actions";
 
-const STATUS: Record<string, string> = {
-  unverified: "Waiting for family",
-  verified: "Verified by family",
-  superseded: "Updated by family",
-  retracted: "Not used",
+const STATUS: Record<string, { label: string; style: string }> = {
+  unverified: { label: "Waiting for family", style: "bg-secondary text-primary" },
+  verified: { label: "Verified by family", style: "bg-success/10 text-success" },
+  superseded: { label: "Updated by family", style: "bg-muted text-muted-foreground" },
+  retracted: { label: "Not used", style: "bg-muted text-muted-foreground" },
 };
 const fmt = (d?: Date | null) => d?.toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
-const input = "rounded border px-2 py-1";
+const panel = "rounded-2xl border-border/70 shadow-[0_20px_50px_-35px_rgba(80,40,50,0.35)]";
 
 // Caregivers only add notes. They see what they themselves sent and whether family has checked it, nothing else.
 export async function CaregiverView({ me, personName }: { me: Session; personName?: string }) {
@@ -20,45 +29,74 @@ export async function CaregiverView({ me, personName }: { me: Session; personNam
     .sort({ created_at: -1 }).limit(20).toArray();
 
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-8 p-4">
-      <header className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Care notes for {personName}</h1>
-          <p className="text-sm text-zinc-500">Signed in as {me.name} (caregiver)</p>
+    <div className="flex min-h-full flex-1 flex-col">
+      <header className="sticky top-0 z-10 border-b bg-background/85 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between gap-4 px-4 sm:px-6">
+          <Logo href="/dashboard" />
+          <div className="flex items-center gap-3">
+            <span className="hidden text-sm text-muted-foreground sm:inline">{me.name} · Caregiver</span>
+            <LogoutButton />
+          </div>
         </div>
-        <LogoutButton />
       </header>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Add a note</h2>
-        <p className="text-sm text-zinc-500">Family checks each note before Keepsake treats it as fact.</p>
-        <form action={addMemory} className="flex flex-col gap-3">
-          <label className="flex flex-col gap-1 text-sm">What should {personName} know?
-            <textarea name="text" required rows={3} className={input} />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">Expires (optional)
-            <input name="expires_at" type="datetime-local" className={`${input} self-start`} />
-          </label>
-          <button className="self-start rounded bg-foreground px-3 py-1 text-background">Add note</button>
-        </form>
-      </section>
+      <main className="mx-auto w-full max-w-3xl flex-1 space-y-8 px-4 py-10 sm:px-6">
+        <section className="space-y-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">Care team space</p>
+          <h1 className="font-serif text-5xl leading-tight">Care notes for <em className="text-primary">{personName}</em></h1>
+          <p className="text-muted-foreground">Family checks each note before Keepsake treats it as fact.</p>
+        </section>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Your recent notes</h2>
-        {notes.length ? (
-          <ul className="flex flex-col gap-2">
-            {notes.map((n) => (
-              <li key={n._id.toString()} className="rounded border p-3">
-                <p>{n.text}</p>
-                <p className="text-xs text-zinc-500">
-                  {STATUS[n.status] ?? n.status} · {fmt(n.created_at)}
-                  {n.expires_at && <> · expires {fmt(n.expires_at)}</>}
-                </p>
-              </li>
-            ))}
-          </ul>
-        ) : <p className="text-sm text-zinc-500">You haven&apos;t added any notes yet.</p>}
-      </section>
-    </main>
+        <Card className={panel}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 font-serif text-xl font-normal"><NotebookPen className="size-4 text-primary" aria-hidden /> Add a note</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form action={addMemory} className="space-y-4">
+              <div className="grid gap-2">
+                <Label htmlFor="note-text">What should {personName} know?</Label>
+                <Textarea id="note-text" name="text" required rows={3} placeholder="Reading glasses are on the bedside table now" />
+              </div>
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="grid gap-2">
+                  <Label htmlFor="note-exp">Expires (optional)</Label>
+                  <Input id="note-exp" name="expires_at" type="datetime-local" className="w-auto" />
+                </div>
+                <Button className="rounded-full px-6">Add note</Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card className={cn(panel, "gap-0 py-0")}>
+          <CardHeader className="border-b px-6 py-5">
+            <CardTitle className="font-serif text-2xl font-normal">Your recent notes</CardTitle>
+            <CardDescription>What you&apos;ve sent, and whether family has checked it.</CardDescription>
+          </CardHeader>
+          {notes.length ? (
+            <ul className="divide-y">
+              {notes.map((n) => {
+                const s = STATUS[n.status] ?? { label: n.status, style: "bg-muted text-muted-foreground" };
+                return (
+                  <li key={n._id.toString()} className="space-y-2 px-6 py-4">
+                    <p className="text-[15px]">{n.text}</p>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      <Badge className={cn("gap-1 rounded-full border-0", s.style)}>
+                        {n.status === "verified" ? <CheckCircle2 aria-hidden /> : n.status === "unverified" ? <Hourglass aria-hidden /> : null}
+                        {s.label}
+                      </Badge>
+                      <span>{fmt(n.created_at)}</span>
+                      {n.expires_at && <span className="flex items-center gap-1"><Clock className="size-3" aria-hidden /> expires {fmt(n.expires_at)}</span>}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="px-6 py-10 text-center text-muted-foreground">You haven&apos;t added any notes yet.</p>
+          )}
+        </Card>
+      </main>
+    </div>
   );
 }
