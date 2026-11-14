@@ -1,10 +1,10 @@
 import Link from "next/link";
 import type { WithId, Document, ObjectId } from "mongodb";
 import { Check, Clock, Eraser, History, Link2, PencilLine, Plus, Replace, X } from "lucide-react";
-import { requireAuth } from "@/lib/auth";
+import { requireSession } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { SCOPES, visibleTo } from "@/lib/memories";
-import { userService } from "@/lib/userService";
+import { careTeam } from "@/lib/users";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/logo";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -31,8 +31,8 @@ const fmt = (d?: Date | null) => d?.toLocaleString("en-CA", { dateStyle: "medium
 const panel = "rounded-2xl border-border/70 shadow-[0_20px_50px_-35px_rgba(80,40,50,0.35)]";
 
 export default async function DashboardPage() {
-  const { session: me, token } = await requireAuth(["family", "caregiver"]);
-  const team = await userService.careTeam(token);
+  const me = await requireSession(["family", "caregiver"]);
+  const team = await careTeam(me);
   const person = team.find((p) => p.role === "person");
   // Caregivers only add notes; the review dashboard below is family-only.
   if (me.role === "caregiver") return <CaregiverView me={me} personName={person?.name} />;
