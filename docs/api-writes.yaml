@@ -5,7 +5,7 @@ info:
   summary: Write-path contract for the Keepsake frontend (Track B)
   description: |
     Write-path contract for the frontend developer. Recall, search and trace
-    are owned by someone else and are not in this file.
+    are in `api-reads.yaml`.
 
     Routes under `/api/` are HTTP. Operations with `x-server-action` are
     Next.js server actions in `client/app/dashboard/actions.ts`, not HTTP
