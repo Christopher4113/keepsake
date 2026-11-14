@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { WithId, Document, ObjectId } from "mongodb";
 import { Check, Clock, Eraser, Heart, History, Link2, PencilLine, Plus, Replace, X } from "lucide-react";
 import { requireAuth } from "@/lib/auth";
@@ -124,7 +125,13 @@ export default async function DashboardPage() {
     <div className="flex min-h-full flex-1 flex-col">
       <header className="sticky top-0 z-10 border-b bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-          <Logo href="/dashboard" />
+          <div className="flex items-center gap-4">
+            <Logo href="/dashboard" />
+            <nav className="flex gap-1">
+              <span aria-current="page" className="rounded-full bg-secondary px-3 py-1.5 text-sm text-primary">Memories</span>
+              <Link href="/trace" className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">Trace</Link>
+            </nav>
+          </div>
           <div className="flex items-center gap-3">
             <span className="hidden text-sm text-muted-foreground sm:inline">
               {me.name} · <span className="capitalize">{me.role}</span>
