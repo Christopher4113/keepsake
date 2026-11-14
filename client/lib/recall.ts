@@ -137,7 +137,7 @@ export async function recall(s: Session, query: string, conversation_id: string 
     source: { role: c.source.role, name: author(c) },
   }));
   const trace = () => traceTurn({
-    turnId: insertedId, question: query, conversationId: conversation_id, person_id: s.person_id, user_id: s.user_id,
+    turnId: insertedId, question: query, conversationId: conversation_id, person_id: s.person_id, user_id: s.user_id, role: s.role,
     startedAt, searchedAt, candidates, memories, degraded, minRerankScore: MIN_RERANK_SCORE,
   });
   return { turn_id: insertedId.toString(), memories, trace };
