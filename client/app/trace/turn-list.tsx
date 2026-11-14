@@ -9,7 +9,7 @@ import { DEGRADED, score, when } from "./format";
 
 const POLL_MS = 3000;
 
-// Polls so a question Margaret just asked appears on the family's screen without a refresh.
+// Polls so a question just asked appears on the family's screen without a refresh.
 export function TurnList({ initial }: { initial: TurnSummary[] }) {
   const [turns, setTurns] = useState(initial);
 
@@ -29,7 +29,7 @@ export function TurnList({ initial }: { initial: TurnSummary[] }) {
   }, []);
 
   if (!turns.length) {
-    return <p className="rounded-2xl border border-dashed px-6 py-10 text-center text-muted-foreground">No questions yet. When Margaret asks something, it shows up here.</p>;
+    return <p className="rounded-2xl border border-dashed px-6 py-10 text-center text-muted-foreground">No questions yet. When Margaret or the care team asks something, it shows up here.</p>;
   }
 
   return (
@@ -42,7 +42,7 @@ export function TurnList({ initial }: { initial: TurnSummary[] }) {
                 <p className="font-serif text-xl leading-snug">{t.question}</p>
                 <p className="line-clamp-2 text-sm text-muted-foreground">{t.answer ?? "Waiting for the answer…"}</p>
                 <p className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
-                  <span>{when(t.at)}</span>
+                  <span>{t.asked_by.name ?? "Someone"} asked · {when(t.at)}</span>
                   {t.result_count ? (
                     <span>{t.result_count} {t.result_count === 1 ? "memory" : "memories"} · best {score(t.top_rerank_score)}</span>
                   ) : (

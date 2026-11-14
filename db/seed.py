@@ -12,6 +12,7 @@ Memory states in this seed:
 """
 import os
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import voyageai
 from dotenv import load_dotenv
@@ -28,10 +29,23 @@ vo = voyageai.Client()  # reads VOYAGE_API_KEY
 now = datetime.now(timezone.utc)
 ago = lambda **kw: now - timedelta(**kw)
 day = lambda d: d.astimezone().strftime("%A %b %-d")  # e.g. "Saturday Nov 14", local zone
+# Midnight of that day in the household's zone, as validate.ts sets event_start for "on <day>" with no time.
+# The caregiver briefing groups on this (Today / Coming up).
+midnight = lambda d: d.astimezone(ZoneInfo("America/Toronto")).replace(hour=0, minute=0, second=0, microsecond=0)
 
 anna = {"role": "family", "user_id": "anna", "name": "Anna"}
 ravi = {"role": "caregiver", "user_id": "ravi", "name": "Ravi"}
-NAMES = {"anna": "Anna", "ravi": "Ravi", "david": "David", "margaret": "Margaret"}
+sam = {"role": "family", "user_id": "sam", "name": "Sam"}
+NAMES = {"anna": "Anna", "ravi": "Ravi", "david": "David", "margaret": "Margaret", "harold": "Harold", "sam": "Sam", "renae": "Renae"}
+
+# Demo logins: <user_id>@keepsake.test, password "keepsake". Only missing ones are added, so a changed
+# password or a user added through POST /users survives a reseed.
+DEMO_PASSWORD_HASH = "$2b$10$OwUnGqFauqbAzW8RROu5M.1cVcMbd1ZrVxJvdXg13n74VvWsoys9m"
+for user_id, name in NAMES.items():
+    db.people.update_one({"user_id": user_id}, {"$setOnInsert": {
+        "schema_version": SCHEMA_VERSION, "user_id": user_id, "name": name,
+        "email": f"{user_id}@keepsake.test", "password_hash": DEMO_PASSWORD_HASH,
+    }}, upsert=True)
 
 for name in ["memories", "households", "audit_log", "replay_runs"]:
     db[name].delete_many({})
@@ -44,6 +58,16 @@ db.households.insert_one({
         {"user_id": "anna", "name": "Anna", "role": "family", "relation": "daughter", "admin": True},
         {"user_id": "david", "name": "David", "role": "family", "relation": "son", "admin": False},
         {"user_id": "ravi", "name": "Ravi", "role": "caregiver", "shift": "weekday mornings"},
+    ],
+})
+# Second household, for isolation checks: nobody in either household may see the other's memories, turns or reviews.
+db.households.insert_one({
+    "schema_version": SCHEMA_VERSION,
+    "person_id": "harold",
+    "members": [
+        {"user_id": "harold", "name": "Harold", "role": "person"},
+        {"user_id": "sam", "name": "Sam", "role": "family", "relation": "son", "admin": True},
+        {"user_id": "renae", "name": "Renae", "role": "caregiver"},
     ],
 })
 
@@ -64,9 +88,12 @@ memories = [
     {"key": "ravi_holidays", "text": "Ravi does not come on statutory holidays", "scope": "caregiver", "status": V, "source": anna},
 
     # ---------- verified: events (no expiry; the date is in the text) ----------
-    {"key": "anna_dinner", "text": f"Anna is bringing dinner on {day(now)} at 6pm", "scope": "family", "status": V, "source": anna},
-    {"key": "joan_books", "text": f"Neighbour Joan is dropping off library books on the morning of {day(now)}", "scope": "caregiver", "status": V, "source": anna},
-    {"key": "leo_birthday", "text": f"Grandson Leo's birthday party is on {day(now + timedelta(days=7))}", "scope": "family", "status": V, "source": anna},
+    {"key": "anna_dinner", "text": f"Anna is bringing dinner on {day(now)} at 6pm", "scope": "family", "status": V, "source": anna,
+     "event_start": midnight(now).replace(hour=18)},
+    {"key": "joan_books", "text": f"Neighbour Joan is dropping off library books on the morning of {day(now)}", "scope": "caregiver", "status": V, "source": anna,
+     "event_start": midnight(now)},
+    {"key": "leo_birthday", "text": f"Grandson Leo's birthday party is on {day(now + timedelta(days=7))}", "scope": "family", "status": V, "source": anna,
+     "event_start": midnight(now + timedelta(days=7))},
 
     # ---------- verified: facts ----------
     {"key": "husband", "text": "Margaret's husband George passed away in 2022", "scope": "family", "status": V, "source": anna},
@@ -112,6 +139,14 @@ memories = [
     {"key": "key_doormat_denied", "text": "The spare key is under the front doormat", "scope": "caregiver", "status": "retracted", "source": ravi,
      "_proposes": "spare_key", "_candidates": [("spare_key", True)], "_decision": ("denied", "anna", ago(days=5)),
      "created_at": ago(days=6)},
+
+    # ---------- Harold's household: same topics as Margaret's, so a cross-household leak shows up in recall ----------
+    {"key": "h_sam_visits", "person_id": "harold", "text": "Harold's son Sam visits on Sunday afternoons", "scope": "family", "status": V, "source": sam},
+    {"key": "h_physio", "person_id": "harold", "text": "Harold's physio is on Thursdays at 11am", "scope": "caregiver", "status": V, "source": sam},
+    {"key": "h_hearing_aids", "person_id": "harold", "text": "Harold keeps his hearing aids in the bedside drawer", "scope": "caregiver", "status": V, "source": sam},
+    {"key": "h_glasses", "person_id": "harold", "text": "Harold's reading glasses are in the case on the coffee table", "scope": "caregiver", "status": V, "source": sam},
+    {"key": "h_spare_key", "person_id": "harold", "text": "Harold's spare key is with the neighbour at number 12", "scope": "caregiver", "status": V, "source": sam},
+    {"key": "h_daughter", "person_id": "harold", "text": "Harold's daughter Priya lives in Vancouver and calls on Wednesdays", "scope": "family", "status": V, "source": sam},
 ]
 
 # One Voyage call embeds every memory. input_type="document" for stored text;
@@ -140,6 +175,7 @@ for m in memories:
                        "decided_by": "anna", "decided_at": ago(days=20)},
         }})
         db.audit_log.insert_one({"schema_version": SCHEMA_VERSION, "memory_id": _id, "action": "approve", "actor": anna,
+                                 "person_id": m.get("person_id", "margaret"), "scope": m["scope"],
                                  "old_id": ids[m["_supersedes"]], "new_id": _id, "at": ago(days=20)})
     if "_proposes" in m:
         state, by, at = m.get("_decision", ("pending", None, None))
@@ -152,6 +188,7 @@ for m in memories:
         if state == "denied":
             db.audit_log.insert_one({"schema_version": SCHEMA_VERSION, "memory_id": _id, "action": "deny",
                                      "actor": {"role": "family", "user_id": by, "name": NAMES[by]},
+                                     "person_id": m.get("person_id", "margaret"), "scope": m["scope"],
                                      "old_id": None, "new_id": None, "at": at})
 
 counts = {s: db.memories.count_documents({"status": s}) for s in ["verified", "unverified", "superseded", "retracted"]}
@@ -161,3 +198,5 @@ print(f"Seeded {len(docs)} memories with {EMBED_MODEL} ({len(vectors[0])} dims):
 old = sum(db[c].count_documents({"schema_version": {"$ne": SCHEMA_VERSION}}) for c in ["memories", "households", "audit_log", "people"])
 print(f"Docs not on schema_version {SCHEMA_VERSION}: {old}")
 print(f"Review queue: {pending} pending, {proposing} propose an override.")
+for h in db.households.find({}, {"person_id": 1, "members.user_id": 1}):
+    print(f"Household {h['person_id']}: {[m['user_id'] for m in h['members']]}, {db.memories.count_documents({'person_id': h['person_id']})} memories")

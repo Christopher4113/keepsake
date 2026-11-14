@@ -381,7 +381,7 @@ export async function reviewMemory(s: Session, id: string, decision: unknown): P
       const r = await coll.updateOne(pending, { $set: { ...decidedBy, status: "retracted", "review.state": "denied" } }, { session });
       if (!r.modifiedCount) throw new WriteError("conflict", "This review has already been decided");
       await audit(s, _id, "deny", mem.scope, null, null, session);
-      const old = proposed ? await coll.findOne({ _id: proposed }, { projection: { status: 1 }, session }) : null;
+      const old = proposed ? await coll.findOne({ _id: proposed, person_id: s.person_id }, { projection: { status: 1 }, session }) : null;
       return result("deny", "retracted", "denied", null, old?.status ?? null, "deny");
     }
 
@@ -419,7 +419,7 @@ export async function listReviews(s: Session): Promise<ReviewItem[]> {
 
   const ids = pending.flatMap((m) => (m.review.candidates ?? []).map((c: { memory_id: ObjectId }) => c.memory_id));
   const lookups = ids.length
-    ? await coll.find({ _id: { $in: ids }, scope: { $in: readableScopes(s.role) } }, { projection: { text: 1, source: 1, created_at: 1 } }).toArray()
+    ? await coll.find({ _id: { $in: ids }, person_id: s.person_id, scope: { $in: readableScopes(s.role) } }, { projection: { text: 1, source: 1, created_at: 1 } }).toArray()
     : [];
   const byId = new Map(lookups.map((d) => [d._id.toString(), d]));
 

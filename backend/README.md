@@ -14,7 +14,7 @@ cd backend && npm install && npm run dev           # http://127.0.0.1:4000
 npm test                                           # offline, uses mongodb-memory-server
 ```
 
-Demo logins: `<user_id>@keepsake.test`, password `keepsake`. The users are margaret (person), anna (family admin), ravi (caregiver), and harold and sam (second household).
+Demo logins: `<user_id>@keepsake.test`, password `keepsake`. The users are margaret (person), anna (family admin), david (family) and ravi (caregiver), and in a second household harold (person), sam (family admin) and renae (caregiver).
 
 ## Auth model
 
@@ -50,7 +50,7 @@ Set `USER_SERVICE_URL=http://127.0.0.1:4000` and the shared `AUTH_SECRET` in `cl
 
 ## Voice agent (ElevenLabs)
 
-In the web client, the voice agent runs as Margaret through her login. `/api/talk/session` gets an ElevenLabs signed URL for a `person` session, and the agent's tools call `/api/talk/recall` and `/api/talk/remember`, which read the same `keepsake_session` cookie. So the agent needs no separate login. When those routes call a backend service, they forward the cookie token as `Authorization: Bearer`.
+In the web client, the voice agent runs as Margaret through her login. `/api/talk/session` gets an ElevenLabs signed URL for a `person` session, and the agent's tools call `/api/recall` (the one search API, open to every role) and `/api/talk/remember`, which read the same `keepsake_session` cookie. So the agent needs no separate login. When those routes call a backend service, they forward the cookie token as `Authorization: Bearer`.
 
 If the agent later calls this API directly through ElevenLabs webhook tools, pass the token as the `secret__keepsake_token` dynamic variable and send `Authorization: Bearer {{secret__keepsake_token}}`. `secret__` variables are never shown to the LLM.
 

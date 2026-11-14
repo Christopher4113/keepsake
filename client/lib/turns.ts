@@ -10,9 +10,13 @@ import type { TopicGuidance } from "./guidance";
 // D-A2: family only for the MVP. A turn's answer can paraphrase a family-scope memory.
 export const canViewTrace = (s: Session) => s.role === "family";
 
+export type AskedBy = { name: string | null; role: Role };
+
 export type TurnSummary = {
   id: string;
   at: string;
+  // Margaret through the voice agent, or a caregiver or family member through /api/recall.
+  asked_by: AskedBy;
   question: string;
   answer: string | null;
   result_count: number;
@@ -35,7 +39,6 @@ export type TurnResult = {
 
 export type Turn = Omit<TurnSummary, "result_count"> & {
   conversation_id: string | null;
-  asked_by: { name: string | null; role: Role };
   results: TurnResult[];
   min_rerank_score: number;
   guidance: TopicGuidance[];
@@ -43,19 +46,35 @@ export type Turn = Omit<TurnSummary, "result_count"> & {
 
 const iso = (d: Date) => d.toISOString();
 
+type Member = { user_id: string; name: string; role: Role };
+// Names and roles come from households.members now, so a renamed member shows their current name.
+async function membersOf(person_id: string) {
+  const household = await (await getDb()).collection("households").findOne({ person_id }, { projection: { members: 1 } });
+  return new Map<string, Member>((household?.members ?? []).map((m: Member) => [m.user_id, m]));
+}
+// A member who has since left the household shows as "Someone"; old turns predate other roles asking, so default to person.
+const askedBy = (members: Map<string, Member>, user_id: string): AskedBy => {
+  const m = members.get(user_id);
+  return { name: m?.name ?? null, role: m?.role ?? "person" };
+};
+
 // Newest first, using the {person_id: 1, at: -1} index. before pages back from the oldest turn already shown.
 export async function listTurns(s: Session, { limit = 20, before }: { limit?: number; before?: Date } = {}): Promise<TurnSummary[]> {
-  const docs = await (await getDb()).collection("turns")
-    .find(
-      { person_id: s.person_id, ...(before ? { at: { $lt: before } } : {}) },
-      { projection: { at: 1, question: 1, answer: 1, results: 1, top_rerank_score: 1, degraded: 1 } },
-    )
-    .sort({ at: -1 })
-    .limit(Math.min(Math.max(limit, 1), 100))
-    .toArray();
+  const [docs, members] = await Promise.all([
+    (await getDb()).collection("turns")
+      .find(
+        { person_id: s.person_id, ...(before ? { at: { $lt: before } } : {}) },
+        { projection: { at: 1, user_id: 1, question: 1, answer: 1, results: 1, top_rerank_score: 1, degraded: 1 } },
+      )
+      .sort({ at: -1 })
+      .limit(Math.min(Math.max(limit, 1), 100))
+      .toArray(),
+    membersOf(s.person_id),
+  ]);
   return docs.map((d) => ({
     id: d._id.toString(),
     at: iso(d.at),
+    asked_by: askedBy(members, d.user_id),
     question: d.question,
     answer: d.answer ?? null,
     result_count: d.results.length,
@@ -71,20 +90,19 @@ export async function getTurn(s: Session, id: string): Promise<Turn | null> {
   const t = await db.collection("turns").findOne({ _id: new ObjectId(id), person_id: s.person_id });
   if (!t) return null;
 
-  const [current, household] = await Promise.all([
+  const [current, members] = await Promise.all([
     db.collection("memories")
       .find({ _id: { $in: t.results.map((r: { memory_id: ObjectId }) => r.memory_id) }, person_id: s.person_id }, { projection: { status: 1 } })
       .toArray(),
-    db.collection("households").findOne({ person_id: s.person_id }, { projection: { members: 1 } }),
+    membersOf(s.person_id),
   ]);
   const statusNow = new Map(current.map((m) => [m._id.toString(), m.status as string]));
-  const asker = (household?.members ?? []).find((m: { user_id: string }) => m.user_id === t.user_id);
 
   return {
     id: t._id.toString(),
     at: iso(t.at),
     conversation_id: t.conversation_id ?? null,
-    asked_by: { name: asker?.name ?? null, role: asker?.role ?? "person" },
+    asked_by: askedBy(members, t.user_id),
     question: t.question,
     answer: t.answer ?? null,
     results: t.results.map((r: Record<string, unknown> & { memory_id: ObjectId; created_at: Date }) => ({

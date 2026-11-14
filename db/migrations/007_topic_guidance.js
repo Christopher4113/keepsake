@@ -21,7 +21,8 @@ if (!db.getCollectionNames().includes("topic_guidance")) {
 db.topic_guidance.find().forEach((g) => {
   const h = db.households.findOne({ person_id: g.person_id });
   const userId = typeof g.set_by === "string" ? g.set_by : g.set_by?.user_id;
-  const member = h?.members.find((m) => m.user_id === userId);
+  // Not `h?.members.find(...)`: mongosh loses `this` on optional-chained method calls ("this" is null).
+  const member = (h ? h.members : []).find((m) => m.user_id === userId);
   const topic = typeof g.topic === "string" ? g.topic.trim().toLowerCase() : g.topic;
   const updated = db.topic_guidance.updateOne({ _id: g._id }, { $set: {
     schema_version: 1, topic,
