@@ -24,10 +24,9 @@ const TURNS_VALIDATOR = {
           required: ["memory_id", "scope", "status", "author_role", "created_at"],
           properties: {
             memory_id:    { bsonType: "objectId" },
-            // null for private memories: their text never lands in turns (family reads the trace).
-            text:         { bsonType: ["string", "null"] },
+            text:         { bsonType: "string" },
             status:       { enum: ["unverified", "verified", "superseded", "retracted"] },
-            scope:        { enum: ["private", "family", "caregiver"] },
+            scope:        { enum: ["family", "caregiver"] },  // A17: no private scope
             author_name:  { bsonType: ["string", "null"] },
             author_role:  { enum: ["person", "family", "caregiver"] },
             created_at:   { bsonType: "date" },

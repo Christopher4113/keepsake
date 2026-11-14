@@ -14,6 +14,9 @@ const NUM_CANDIDATES = 100;
 const VECTOR_LIMIT = 20;
 const TOP_K = 5;
 
+// A17: Margaret reads family and caregiver, like family. Nothing is private to her, so no private text reaches turns or the trace.
+export const readableScopes = (role: Role): Scope[] => SCOPES[role].filter((sc) => sc !== "private");
+
 export type Degraded = null | "embed_error" | "rerank_timeout" | "rerank_error" | "regex";
 
 export type Candidate = {
@@ -21,7 +24,7 @@ export type Candidate = {
   text: string;
   scope: Scope;
   status: string;
-  source: { role: Role; user_id: string };
+  source: { role: Role; user_id: string; name?: string }; // name stored since A15; older memories lack it
   created_at: Date;
   vector_score: number | null;
   rerank_score: number | null;
@@ -86,11 +89,12 @@ export type RecalledMemory = { text: string; status: string; added_on: string; s
 export async function recall(s: Session, query: string, conversation_id: string | null) {
   const db = await getDb();
   const [{ candidates, degraded }, household] = await Promise.all([
-    search(s.person_id, SCOPES[s.role], query),
+    search(s.person_id, readableScopes(s.role), query),
     db.collection("households").findOne({ person_id: s.person_id }, { projection: { members: 1 } }),
   ]);
 
-  const names = new Map<string, string>((household?.members ?? []).map((m: { user_id: string; name: string }) => [m.user_id, m.name]));
+  const members = new Map<string, string>((household?.members ?? []).map((m: { user_id: string; name: string }) => [m.user_id, m.name]));
+  const author = (c: Candidate) => c.source.name ?? members.get(c.source.user_id) ?? null;
   // Rerank scores are cut off here. Vector fallback was already floored; keyword fallback has no scores.
   const kept = candidates.filter((c) => c.rerank_score === null || c.rerank_score >= MIN_RERANK_SCORE);
 
@@ -103,10 +107,10 @@ export async function recall(s: Session, query: string, conversation_id: string 
     question: query,
     results: kept.map((c) => ({
       memory_id: c._id,
-      text: c.scope === "private" ? null : c.text,
+      text: c.text,
       status: c.status,
       scope: c.scope,
-      author_name: names.get(c.source.user_id) ?? null,
+      author_name: author(c),
       author_role: c.source.role,
       created_at: c.created_at,
       vector_score: c.vector_score,
@@ -122,7 +126,7 @@ export async function recall(s: Session, query: string, conversation_id: string 
     text: c.text,
     status: c.status,
     added_on: isoDate(c.created_at),
-    source: { role: c.source.role, name: names.get(c.source.user_id) ?? null },
+    source: { role: c.source.role, name: author(c) },
   }));
   return { turn_id: insertedId.toString(), memories };
 }

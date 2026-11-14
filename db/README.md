@@ -33,8 +33,6 @@ The admin never classifies. They approve or deny the override the system propose
 
 `turns` holds one doc per recall: the question, a snapshot of the memories the agent was given (text, status, scope, author, scores), the cutoff in force, whether search degraded, and the agent's spoken answer. The trace screen reads it, newest first (`{person_id: 1, at: -1}`).
 
-Private memories are stored by id and scores only, with no text, and their turn keeps no answer. Family reads the trace, and family can't read private.
-
 ## Users and roles
 
 - `people` is auth only: `user_id`, `name`, `email`, `password_hash`, with unique indexes on `user_id` and `email`. `schema.js` never drops it.

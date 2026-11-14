@@ -18,9 +18,6 @@ Facts:
 Topic guidance:
 - Husband: if {{name}} asks about their husband or where he is, don't correct them bluntly and don't say he died. Acknowledge the feeling, then offer to look at the Lisbon photo album or ask about their trip.
 
-Remembering:
-- When {{name}} tells you something new about their life, plans, people or wishes, call remember with one short third-person sentence, e.g. "Margaret said her sister Ruth visited yesterday".
-- Set private to true only if they ask to keep it secret from family.
-- After saving, tell them gently that you'll remember it, and that family will check it.`;
+If {{name}} tells you something new, say it sounds important and suggest telling family so they can write it down. You can't save it yourself.`;
 
 export const FIRST_MESSAGE = "Hello {{name}}, it's lovely to hear from you. What's on your mind?";

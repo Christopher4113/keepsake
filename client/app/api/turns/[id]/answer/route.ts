@@ -1,28 +1,26 @@
 import { ObjectId } from "mongodb";
 import { getSession } from "@/lib/auth";
 import { getDb } from "@/lib/db";
+import { apiError } from "@/lib/http";
 
 // The voice client posts what the agent said after a recall. It sends the whole answer so far, so retries are idempotent.
+// Contract: docs/api-reads.yaml.
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const s = await getSession();
-  if (s?.role !== "person") return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!s) return apiError("unauthorized", "Sign in required");
+  if (s.role !== "person") return apiError("forbidden", "Only the person can use the voice agent");
 
   const { id } = await ctx.params;
-  if (!ObjectId.isValid(id)) return Response.json({ error: "Not found" }, { status: 404 });
+  if (!ObjectId.isValid(id)) return apiError("not_found", "Turn not found");
   const body = await req.json().catch(() => ({}));
   const answer = typeof body.answer === "string" ? body.answer.trim().slice(0, 4000) : "";
-  if (!answer) return Response.json({ error: "answer is required" }, { status: 400 });
+  if (!answer) return apiError("bad_request", "answer is required");
 
   // Only the person who asked can answer their own turn; anything else looks missing, so turn ids can't be probed.
-  // A turn that used a private memory keeps no answer: the answer could repeat it, and family reads the trace.
-  const res = await (await getDb()).collection("turns").updateOne(
-    { _id: new ObjectId(id), user_id: s.user_id, person_id: s.person_id, "results.scope": { $ne: "private" } },
+  const { matchedCount } = await (await getDb()).collection("turns").updateOne(
+    { _id: new ObjectId(id), user_id: s.user_id, person_id: s.person_id },
     { $set: { answer } },
   );
-  if (!res.matchedCount) {
-    const own = await (await getDb()).collection("turns").countDocuments({ _id: new ObjectId(id), user_id: s.user_id });
-    if (!own) return Response.json({ error: "Not found" }, { status: 404 });
-    return Response.json({ saved: false, reason: "private" });
-  }
+  if (!matchedCount) return apiError("not_found", "Turn not found");
   return Response.json({ saved: true });
 }

@@ -2,8 +2,7 @@
 // Read-only: calls search() directly, so no turns are written.
 // Run from client/: npx tsx --env-file=.env scripts/calibrate-recall.mts
 // On Voyage's free tier (3 requests/min) set CALIBRATE_DELAY_MS=40000: each question makes two calls.
-import { search } from "../lib/recall";
-import { SCOPES } from "../lib/memories";
+import { readableScopes, search } from "../lib/recall";
 
 // expect: a substring of the memory that should answer it, or null if nothing verified should.
 const CASES: { q: string; expect: string | null }[] = [
@@ -34,7 +33,7 @@ const misses: number[] = [];
 const delay = Number(process.env.CALIBRATE_DELAY_MS ?? 0);
 for (const [i, { q, expect }] of CASES.entries()) {
   if (i && delay) await new Promise((r) => setTimeout(r, delay));
-  const { candidates, degraded } = await search("margaret", SCOPES.person, q);
+  const { candidates, degraded } = await search("margaret", readableScopes("person"), q);
   const top = candidates[0];
   if (expect) {
     const match = candidates.find((c) => c.text.includes(expect));
