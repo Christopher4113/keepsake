@@ -9,7 +9,7 @@ All code in client/ (A9). Each track owns its files; the shared contract below c
 - Status values: unverified | verified | superseded | retracted. Recall reads verified + unverified.
 
 ## Track A: read path + trace (demo steps 1-2)
-Files: client/lib/recall.ts, client/app/api/talk/recall/route.ts, client/app/api/turns/**, client/app/trace/**, the hardcoded agent prompt.
+Files: client/lib/recall.ts, client/app/api/recall/route.ts, client/app/api/turns/**, client/app/trace/**, the hardcoded agent prompt.
 1. recall: $vectorSearch pre-filtered (person_id, scope, status), numCandidates 100, limit 20, then rerank-2.5 top 5, drop below MIN_RERANK_SCORE (config), empty list if none. Regex fallback only while the index is building.
 2. turns collection {schema_version, person_id, user_id, conversation_id, at, question, results[{memory_id, text, status, scope, author_name, author_role, created_at, vector_score, rerank_score}], answer}. Index {person_id:1, at:-1}. recall writes it and returns turn_id with the memories.
 3. POST /api/turns/:id/answer: the client posts the agent's spoken answer (from the ElevenLabs transcript event in voice.tsx).
