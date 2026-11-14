@@ -1,4 +1,4 @@
-import { MongoClient, type Collection, type Db } from "mongodb";
+import type { Collection, Db } from "mongodb";
 
 export const ROLES = ["person", "family", "caregiver"] as const;
 export type Role = (typeof ROLES)[number];
@@ -18,22 +18,11 @@ export type PersonDoc = {
   created_at?: Date;
 };
 
-export type HouseholdDoc = {
-  person_id: string;
-  timezone: string; // IANA
-};
+export type HouseholdDoc = { person_id: string; timezone: string };
 
-export type Collections = {
-  people: Collection<PersonDoc>;
-  households: Collection<HouseholdDoc>;
-};
+export type Collections = ReturnType<typeof collections>;
 
-export const collections = (db: Db): Collections => ({
+export const collections = (db: Db) => ({
   people: db.collection<PersonDoc>("people"),
   households: db.collection<HouseholdDoc>("households"),
 });
-
-export async function connect(uri: string, dbName: string) {
-  const client = await new MongoClient(uri, { appName: "keepsake-user-service" }).connect();
-  return { client, db: client.db(dbName) };
-}

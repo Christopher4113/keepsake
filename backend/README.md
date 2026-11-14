@@ -94,4 +94,13 @@ To pass the token to other calls, add a `getToken()` next to `getSession()` that
 
 ## Voice agent (ElevenLabs)
 
-The `/talk` page is a server component, so it can read Margaret's cookie token and pass it into the ElevenLabs session as the dynamic variable `secret__keepsake_token`. Webhook tools send `Authorization: Bearer {{secret__keepsake_token}}`, so the agent acts as Margaret (role `person`). `secret__` variables are never shown to the LLM. ElevenLabs needs a public HTTPS URL to call the API (use a tunnel locally).
+In the web client, the voice agent runs as Margaret through her login. `/api/talk/session` gets an ElevenLabs signed URL for a `person` session, and the agent's tools call `/api/talk/recall` and `/api/talk/remember`, which read the same `keepsake_session` cookie. So the agent needs no separate login. When those routes call a backend service, they forward the cookie token as `Authorization: Bearer`.
+
+If the agent later calls this API directly through ElevenLabs webhook tools, pass the token as the `secret__keepsake_token` dynamic variable and send `Authorization: Bearer {{secret__keepsake_token}}`. `secret__` variables are never shown to the LLM.
+
+## Migrating the web client to this data model
+
+The `web` branch currently reads role and household from `households.members[]`. In this model they live on `people` (`role`, `person_id`, `admin`, `active`), and `households` only has `timezone`. Two client changes:
+
+- **Login**: call `userService.login()` as shown above. If the client keeps querying Mongo itself for now, read `role` and `person_id` from the `people` doc instead of the households lookup.
+- **Care circle**: `userService.careTeam(token)` instead of `household.members`.

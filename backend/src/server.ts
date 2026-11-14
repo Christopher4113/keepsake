@@ -1,17 +1,17 @@
+import { MongoClient } from "mongodb";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
-import { connect } from "./db.js";
 
 const config = loadConfig();
-const { client, db } = await connect(config.MONGODB_URI, config.MONGODB_DB);
-const app = await buildApp({ db, config, logger: { level: "info" } });
+const client = await new MongoClient(config.MONGODB_URI, { appName: "keepsake-user-service" }).connect();
+const app = await buildApp({ db: client.db(config.MONGODB_DB), config, logger: true });
 
-const shutdown = async () => {
-  await app.close();
-  await client.close();
-  process.exit(0);
-};
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, async () => {
+    await app.close();
+    await client.close();
+    process.exit(0);
+  });
+}
 
 await app.listen({ port: config.PORT, host: config.HOST });

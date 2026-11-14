@@ -17,14 +17,14 @@ Out of scope: anything touching `memories`, which goes in a separate PR (see `do
 
 | Area | Decision |
 |---|---|
-| Stack | Node + TypeScript, Fastify + `fastify-type-provider-zod`, native `mongodb`, `bcryptjs`, `jose`, `vitest` + `mongodb-memory-server` |
+| Stack | Node + TypeScript (the project brief says Python/FastAPI; the team chose Node to match the Next.js client), Fastify + `fastify-type-provider-zod`, native `mongodb`, `bcryptjs`, `jose`, `vitest` + `mongodb-memory-server` |
 | Location | `backend/`, a sibling of the web branch's `client/` |
 | Users | `people` (one doc per user: credentials, role, `admin`, `active`) with `person_id` as the foreign key to `households` (one doc per person: `timezone`). Unique `user_id` and `email`. |
 | Login | Email + password, checked with `bcryptjs`. Emails are lowercased. Errors are generic ("Email or password is incorrect."). |
 | Token | HS256 JWT signed with the shared `AUTH_SECRET`. Payload `{user_id, name, role, person_id}`, the same as `client/lib/auth.ts`. Expires in 7 days, the same as the client cookie. |
 | Web client | The login server action calls `POST /auth/login` and stores the returned token in `keepsake_session` as it does today. `requireSession` keeps verifying locally. Next calls our APIs server to server with `Authorization: Bearer`, so the browser needs no CORS. |
 | Revocation | API requests load the caller's `people` doc by `user_id` (indexed) and reject it if it's missing or `active: false`. `admin` comes from the DB, not the token. |
-| Agent | `/talk` reads Margaret's session token on the server and passes it to ElevenLabs as the dynamic variable `secret__keepsake_token`. The webhook tools send `Authorization: Bearer {{secret__keepsake_token}}`. The agent runs as role `person`. |
+| Agent | Runs as Margaret (role `person`) through her web login. The web client's `/api/talk/*` routes use the `keepsake_session` cookie and forward it as Bearer to backend services. ElevenLabs webhook tools can use `secret__keepsake_token` later if they call the API directly. |
 | User creation | `POST /users` is for family admins only. `person_id` is forced to the admin's own household. Roles allowed: `family`, `caregiver`. |
 | Care team | `GET /care-team` returns the caller's household only: `{user_id, name, role, relation, shift}`, with no email or credentials. Any role can call it. |
 | Person profile | `timezone` on the person's doc (Margaret and Harold: `America/Toronto`) |
@@ -56,19 +56,15 @@ Errors use one shape: `{error: {code, message}}`.
 
 ```
 backend/
-  package.json  tsconfig.json  .env.example
   src/
-    server.ts          buildApp() + listen
-    config.ts          zod-parsed env: MONGODB_URI, MONGODB_DB, AUTH_SECRET, PORT
-    db.ts              Mongo client, typed `people` collection
-    auth/tokens.ts     sign / verify (jose, HS256, same payload as client)
-    auth/hooks.ts      requireAuth (verify + load active user), requireAdmin
-    routes/auth.ts     /auth/login, /auth/me
-    routes/users.ts    /care-team, POST /users
-  test/
-    auth.test.ts       login ok/bad, token shape matches client, me
-    users.test.ts      care-team is household-only (Harold never in Margaret's), admin-only create, person_id forced, deactivated user rejected
-  README.md            run steps, curl examples, client contract + userService.ts snippet
+    config.ts   zod-parsed env: MONGODB_URI, MONGODB_DB, AUTH_SECRET, TOKEN_TTL, PORT, HOST
+    db.ts       people / households types and collections
+    auth.ts     sign session (same as client), authenticate (verify + reload active user), requireFamilyAdmin
+    routes.ts   /health, /auth/login, /auth/me, /care-team, POST /users
+    errors.ts   HttpError + { error: { code, message } } handler
+    app.ts      buildApp({ db, config }); tests inject against this
+    server.ts   connect + listen
+  test/         auth.test.ts, users.test.ts (HTTP-level, mongodb-memory-server)
 ```
 
 ## Build order
