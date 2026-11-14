@@ -10,13 +10,19 @@ export async function login(_: string | null, form: FormData) {
   const password = String(form.get("password") ?? "");
   if (!email || !password) return "Enter your email and password.";
 
-  const user = await (await getDb()).collection("people").findOne({ email });
+  const db = await getDb();
+  const user = await db.collection("people").findOne({ email });
   if (!user?.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
     return "Email or password is incorrect.";
   }
 
-  const { user_id, name, role, person_id } = user as unknown as Session;
-  await createSession({ user_id, name, role, person_id });
+  // Role and household link live on households.members, not on people.
+  const household = await db.collection("households").findOne({ "members.user_id": user.user_id });
+  const member = household?.members.find((m: { user_id: string }) => m.user_id === user.user_id);
+  if (!member) return "This account isn't linked to a household yet.";
+
+  const role = member.role as Session["role"];
+  await createSession({ user_id: user.user_id, name: user.name, role, person_id: household!.person_id });
   redirect(homeFor(role));
 }
 
