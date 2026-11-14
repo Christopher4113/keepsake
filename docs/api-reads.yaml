@@ -4,8 +4,8 @@ info:
   version: "1.0.0"
   summary: Read-path contract for recall, turns and the trace (Track A)
   description: |
-    Read-path contract for the voice client, the ElevenLabs teammate and
-    the trace screen. Writes (add, review, correct) are in
+    Read-path contract for the one search API (`POST /api/recall`), the
+    voice client, the ElevenLabs teammate and the trace screen. Writes (add, review, correct) are in
     `api-writes.yaml`.
 
     All routes are HTTP routes in the Next.js client (`client/app/api`).
@@ -14,23 +14,28 @@ info:
     agent prompt in `client/lib/prompt.ts`.
 
     Auth: the `keepsake_session` cookie (JWT issued by the user service).
-    Trust the token for `user_id` only. Margaret (role `person`) is the
-    only caller of the voice routes. The trace is family only for the
+    Trust the token for `user_id` only; role and household are re-read
+    from `households.members` on every request. Any household member can
+    search; the role decides which scopes the search reads (A17), inside
+    the `$vectorSearch` filter itself. The trace is family only for the
     MVP (D-A2); caregivers get 403.
 
     Recall flow, once per question:
-    1. The agent calls its `recall` client tool. The voice client posts
-       to `POST /api/talk/recall` and hands the JSON back to the agent.
+    1. A caller posts to `POST /api/recall`. For Margaret, the voice
+       agent's `recall` client tool does this from the browser and hands
+       the JSON back to the agent. Caregivers and family call the same
+       route.
     2. The server embeds the question (voyage-3.5, `input_type: query`),
        runs `$vectorSearch` on `memory_vec` pre-filtered by `person_id`,
-       readable scopes and `status: verified` (numCandidates 100, limit
+       the caller's readable scopes and `status: verified` (numCandidates 100, limit
        20), reranks with rerank-2.5 (top 5), and drops anything below
        `MIN_RERANK_SCORE`. Unverified memories never reach the agent
        (D-A1).
     3. The server writes a `turns` doc, including empty ones (D-A7), and
        returns its `turn_id`.
-    4. Everything the agent says after that recall, until the next one,
-       is posted to `POST /api/turns/{id}/answer`.
+    4. The answer given from that recall is posted to
+       `POST /api/turns/{id}/answer` by whoever asked. For voice, that is
+       everything the agent says until the next recall.
     5. Family opens the trace (`GET /api/turns`, `GET /api/turns/{id}`)
        to see the question, the answer and each memory used.
 
@@ -51,8 +56,10 @@ servers:
     description: Next.js client (`client/`)
 
 tags:
+  - name: Search
+    description: The one search API, and saving the answer given from it. Any household member.
   - name: Voice
-    description: Routes the voice client calls during a conversation. Margaret only.
+    description: Starting a voice session. Margaret only.
   - name: Trace
     description: '"How did it know this?" Family only.'
 
@@ -95,16 +102,26 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
-  /api/talk/recall:
+  /api/recall:
     post:
       operationId: recall
-      tags: [Voice]
-      summary: Recall memories for a question (the agent's recall tool)
+      tags: [Search]
+      summary: Search memories for a question (every role)
       description: |
-        Backs the ElevenLabs client tool `recall {query}`. The voice
-        client adds `conversation_id` from the ElevenLabs `onConnect`
-        event, then returns this response to the agent as a JSON
-        string.
+        The one search API. Callers:
+        - Margaret's voice agent, through the ElevenLabs client tool
+          `recall {query}`. The voice client adds `conversation_id` from
+          the ElevenLabs `onConnect` event, then returns this response to
+          the agent as a JSON string.
+        - Caregivers, for the routines, logistics and preferences they
+          need on shift. They read `caregiver` scope only.
+        - Family, who read `family` and `caregiver`, the same as Margaret.
+
+        Any household member may call it, so there is no 403. The role,
+        re-read from `households.members`, picks the readable scopes
+        (A17), and those scopes are part of the `$vectorSearch` pre-filter,
+        so memories outside them are never read. Replaces
+        `/api/talk/recall`.
 
         Returns up to 5 verified memories, best first. An empty
         `memories` list is a normal answer: nothing scored above
@@ -118,8 +135,10 @@ paths:
         - `source`: who added it, so the agent can say "Ravi mentioned…"
           (D-A4).
 
-        Every call writes one `turns` doc, even when `memories` is
-        empty. Keep `turn_id` and post the agent's answer to it.
+        Every call writes one `turns` doc with the caller's `user_id`,
+        even when `memories` is empty. Keep `turn_id` and post the answer
+        given from these memories to it. Family sees every turn in the
+        trace, with who asked.
 
         Degraded paths (the response shape doesn't change):
         - Embed fails: `memories` is empty.
@@ -138,6 +157,10 @@ paths:
                 value:
                   query: Where are my reading glasses?
                   conversation_id: conv_01jcx3k9
+              caregiver:
+                summary: Ravi checks before a Tuesday shift
+                value:
+                  query: Does anything happen on Tuesday afternoons?
       responses:
         "200":
           description: Recalled memories and the turn they were logged under.
@@ -166,22 +189,20 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
 
   /api/turns/{id}/answer:
     post:
       operationId: saveTurnAnswer
-      tags: [Voice]
-      summary: Save what the agent said after a recall
+      tags: [Search]
+      summary: Save the answer given from a recall
       description: |
-        The voice client posts the agent's spoken answer for the latest
-        turn. It collects every agent message after a recall, until the
+        Whoever ran the recall posts the answer given from it. The voice
+        client collects every agent message after a recall, until the
         next recall, keyed by ElevenLabs `response_id`, and sends the
         whole answer joined with spaces each time it grows. Repeating a
         call just overwrites the answer, so retries are safe.
 
-        Only the person who asked can save the answer. Any other turn
+        Only whoever asked can save the answer; any role may. Any other turn
         looks missing (404), so turn ids can't be probed.
       parameters:
         - $ref: "#/components/parameters/TurnId"
@@ -209,8 +230,6 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -257,6 +276,9 @@ paths:
                     turns:
                       - id: "672e00000000000000000102"
                         at: "2026-11-14T15:02:10-05:00"
+                        asked_by:
+                          name: Margaret
+                          role: person
                         question: What is the capital of France?
                         answer: I'm not sure. Let's ask your family.
                         result_count: 0
@@ -264,6 +286,9 @@ paths:
                         degraded: null
                       - id: "672e00000000000000000101"
                         at: "2026-11-14T15:01:30-05:00"
+                        asked_by:
+                          name: Margaret
+                          role: person
                         question: Where are my reading glasses?
                         answer: Ravi mentioned your reading glasses are usually on the kitchen windowsill.
                         result_count: 1
@@ -416,7 +441,7 @@ components:
               code: unauthorized
               message: Sign in required
     Forbidden:
-      description: The caller's role can't use this route (voice routes are Margaret only; the trace is family only).
+      description: The caller's role can't use this route (the voice session is Margaret only; the trace is family only).
       content:
         application/json:
           schema:
@@ -579,13 +604,15 @@ components:
     TurnSummary:
       type: object
       additionalProperties: false
-      required: [id, at, question, answer, result_count, top_rerank_score, degraded]
+      required: [id, at, asked_by, question, answer, result_count, top_rerank_score, degraded]
       properties:
         id:
           $ref: "#/components/schemas/ObjectId"
         at:
           type: string
           format: date-time
+        asked_by:
+          $ref: "#/components/schemas/AskedBy"
         question:
           type: string
         answer:
@@ -599,6 +626,20 @@ components:
           type: [number, "null"]
         degraded:
           $ref: "#/components/schemas/Degraded"
+
+    AskedBy:
+      type: object
+      additionalProperties: false
+      required: [name, role]
+      description: |
+        Who ran the search, read live from `households.members`. `name`
+        is null if they have since left the household; `role` then
+        defaults to `person`.
+      properties:
+        name:
+          type: [string, "null"]
+        role:
+          $ref: "#/components/schemas/Role"
 
     TurnList:
       type: object
@@ -656,14 +697,7 @@ components:
         conversation_id:
           type: [string, "null"]
         asked_by:
-          type: object
-          additionalProperties: false
-          required: [name, role]
-          properties:
-            name:
-              type: [string, "null"]
-            role:
-              $ref: "#/components/schemas/Role"
+          $ref: "#/components/schemas/AskedBy"
         question:
           type: string
         answer:

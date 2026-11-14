@@ -7,12 +7,12 @@ import { apiError } from "@/lib/http";
 
 const ANSWER_SETTLE_MS = 4000;
 
-// The voice client posts what the agent said after a recall. It sends the whole answer so far, so retries are idempotent.
+// Whoever ran a recall posts the answer given from it (the voice agent's speech, or a caregiver's written answer).
+// It sends the whole answer so far, so retries are idempotent.
 // Contract: docs/api-reads.yaml.
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const s = await getMemberSession();
   if (!s) return apiError("unauthorized", "Sign in required");
-  if (s.role !== "person") return apiError("forbidden", "Only the person can use the voice agent");
 
   const { id } = await ctx.params;
   if (!ObjectId.isValid(id)) return apiError("not_found", "Turn not found");
@@ -20,7 +20,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const answer = typeof body.answer === "string" ? body.answer.trim().slice(0, 4000) : "";
   if (!answer) return apiError("bad_request", "answer is required");
 
-  // Only the person who asked can answer their own turn; anything else looks missing, so turn ids can't be probed.
+  // Only whoever asked can answer their own turn; anything else looks missing, so turn ids can't be probed.
   const turns = (await getDb()).collection("turns");
   const _id = new ObjectId(id);
   const { matchedCount } = await turns.updateOne({ _id, user_id: s.user_id, person_id: s.person_id }, { $set: { answer } });

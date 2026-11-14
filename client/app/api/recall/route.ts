@@ -3,12 +3,13 @@ import { getMemberSession } from "@/lib/auth";
 import { apiError } from "@/lib/http";
 import { recall } from "@/lib/recall";
 
-// Client tool "recall": verified memories the agent may state, already filtered to this person's scopes.
-// Contract: docs/api-reads.yaml. Post the spoken answer to /api/turns/:turn_id/answer.
+// The one search API. Margaret's voice agent (client tool "recall"), caregivers and family all call this.
+// Any household member may search; what they get back is limited by role inside recall() (readableScopes),
+// so the role check is part of the database filter, not just a gate in front of it.
+// Contract: docs/api-reads.yaml. Post the answer to /api/turns/:turn_id/answer.
 export async function POST(req: Request) {
   const s = await getMemberSession();
   if (!s) return apiError("unauthorized", "Sign in required");
-  if (s.role !== "person") return apiError("forbidden", "Only the person can use the voice agent");
 
   const body = await req.json().catch(() => ({}));
   const query = String(body.query ?? "").trim().slice(0, 500);

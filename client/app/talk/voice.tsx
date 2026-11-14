@@ -17,7 +17,7 @@ async function post(path: string, body: unknown) {
 // recall is the agent's only tool in the MVP; Margaret doesn't add memories by voice (A16).
 const clientTools = {
   recall: async ({ query }: { query: string }) => {
-    const data = await post("/api/talk/recall", { query, conversation_id: convo.conversationId });
+    const data = await post("/api/recall", { query, conversation_id: convo.conversationId });
     if (data.turn_id) {
       convo.turnId = data.turn_id;
       convo.parts.clear();
