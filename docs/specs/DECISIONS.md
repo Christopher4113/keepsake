@@ -39,7 +39,7 @@ Current decisions, grouped by topic. Each item is what holds now. IDs in bracket
 - [R6, R17] Every recall writes a `turns` doc with the caller's `user_id` and returns `turn_id`. Whoever asked posts the answer to `POST /api/turns/:id/answer`. The trace shows who asked each question.
 - [A5] The trace (`GET /api/turns`, newest first, and `GET /api/turns/:id`) shows the question, the answer, and for each memory who added it, when, its status and its scores.
 - [D-A2] The trace is family only for the MVP; caregivers get 403. An answer can paraphrase a family-scope memory, so filtering results alone would leak.
-- [D5, A11, R13] The agent prompt is hardcoded (`client/lib/prompt.ts`) and includes today's date and no medical advice. Answer only from recall results; with none, say you are not sure and suggest asking family. There is no topic guidance: no per-topic rules in the prompt, no `topic_guidance` collection, no dashboard editor.
+- [D5 revised, A11, R13] The base prompt (`client/lib/prompt.ts`) contains general safety rules, never household-specific facts or scripted topic answers. Family edits per-household `topic_guidance` in the dashboard; caregivers cannot read or edit it. Voice recall loads current guidance on every question (including empty retrievals), returns it separately from verified memories, and snapshots it on the turn and LangSmith traces. Changes apply from the next recall, including within an existing conversation. Guidance cannot override safety or establish facts. Writes and text-free `guidance` audit entries commit together. Migration 007 preserves legacy guidance and adds the unique person/topic index. Indirect questions about an absent loved one get comfort and gentle redirection, without announcing a death. A clear direct death question gets a short verified answer and comfort. Care, health-plan, financial and housing discussions are deferred to family. Immediate danger is never redirected away.
 
 ## Write path
 
@@ -99,7 +99,7 @@ Current decisions, grouped by topic. Each item is what holds now. IDs in bracket
 - [Q2]–[Q6] Answered by [A2]–[A6], with [A12] amending the admin-only parts of [A3] and [A6].
 - [Q7] Answered by [A10]: no expiry.
 - [Q8] Answered by [A9]: all memory logic is in the Next.js client.
-- [Q9] Answered by [A11]: topic guidance is hardcoded in the prompt ([D5] stands). Later removed entirely, including the husband rule.
+- [Q9] Answered by [A11]: topic guidance is hardcoded in the prompt ([D5] stands). Previously removed entirely; D5 is now revised to restore family-editable guidance with general sensitive-topic safety rules.
 - The brief and early demo flow said family can "expire" memories, the system labels "supersedes/related/unrelated", and only the family admin confirms. Replaced by [A10], [A14] and [A12].
 - [R5] Recall included unverified memories tagged with status, and the prompt said "you mentioned" for them. Replaced by [D-A1].
 - The trace for caregivers in their own scopes (SPEC role table). Replaced by [D-A2].

@@ -64,6 +64,32 @@ const authorName = (m: Document, names: Names) =>
 const from = (s: Session): From => ({ name: s.name, role: s.role });
 const isFamily = (s: Session) => s.role === "family";
 
+// Blank guidance removes a topic. Changes and their text-free audit commit together.
+export async function saveGuidance(s: Session, topicInput: unknown, guidanceInput: unknown) {
+  requireRole(s, ["family"], "Only family can change conversation guidance");
+  const topic = typeof topicInput === "string" ? topicInput.trim().toLowerCase() : "";
+  const guidance = typeof guidanceInput === "string" ? guidanceInput.trim() : "";
+  if (!topic || topic.length > 100 || typeof guidanceInput !== "string" || guidance.length > 2000) {
+    throw new WriteError("bad_request", "Use a topic up to 100 characters and guidance up to 2,000 characters.");
+  }
+  await inTransaction(async (session) => {
+    const coll = (await getDb()).collection("topic_guidance");
+    const filter = { person_id: s.person_id, topic };
+    const existing = await coll.findOne(filter, { session });
+    const id = existing?._id ?? new ObjectId();
+    if (!guidance) {
+      if (!existing) return;
+      await coll.deleteOne(filter, { session });
+    } else {
+      await coll.updateOne(filter, { $set: {
+        schema_version: SCHEMA_VERSION, ...filter, guidance,
+        set_by: { user_id: s.user_id, name: s.name }, updated_at: new Date(),
+      }, $setOnInsert: { _id: id } }, { upsert: true, session });
+    }
+    await audit(s, id, "guidance", "family", null, null, session);
+  });
+}
+
 function requireRole(s: Session, roles: Role[], message: string) {
   if (!roles.includes(s.role)) throw new WriteError("forbidden", message);
 }

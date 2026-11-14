@@ -60,7 +60,7 @@ classify(text, person_id): embed as a document, then `$vectorSearch` candidates 
 ## Voice agent contract (for the ElevenLabs teammate)
 - Client tool: `recall {query}` (the client adds `conversation_id`) returns `{turn_id, memories[{text, status, added_on, source:{role, name}}]}`. There is no `remember` tool in the MVP (A16). Full contract: `docs/api-reads.yaml`.
 - After the agent answers, call `POST /api/turns/:turn_id/answer` (done in `client/app/talk/voice.tsx`).
-- Prompt: `client/lib/prompt.ts`. Today's date (`{{today}}`, America/Toronto, from `/api/talk/session`; D-A5); answer only from recall results; read "today" in a memory against its `added_on`; attribute facts with `source.name`; with no results, say you're not sure and suggest asking family; no medical advice. There is no topic guidance.
+- Prompt: `client/lib/prompt.ts`. Today's date (`{{today}}`, America/Toronto, from `/api/talk/session`; D-A5); answer only from recall results; read "today" in a memory against its `added_on`; attribute facts with `source.name`; with no results, say you're not sure and suggest asking family; no medical advice. Family-editable topic guidance is stored in `topic_guidance`, loaded separately on each voice recall, and snapshotted on turns. It controls tone and redirection, never establishes personal facts or overrides safety. Family edits use `saveGuidance` in `lib/writes.ts`; caregivers have no guidance access. See migration 007 and `docs/testing-sensitive-conversations.md`.
 
 ## Household members
 Only the family admin adds or removes members (not built yet: the old `backend/` `POST /users` was removed when the user service moved into Next.js). That is the admin's only extra power.

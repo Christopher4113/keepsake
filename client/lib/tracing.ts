@@ -1,6 +1,7 @@
 import type { ObjectId } from "mongodb";
 import { RunTree } from "langsmith/run_trees";
 import type { Candidate, Degraded, RecalledMemory } from "./recall";
+import type { TopicGuidance } from "./guidance";
 import type { Role } from "./auth";
 
 // LangSmith observability for recall (Margaret's voice agent, and written searches by caregivers and family). Per turn: a "recall" trace (question, retriever step with every candidate
@@ -37,6 +38,7 @@ export type TurnTrace = {
   memories: RecalledMemory[];
   degraded: Degraded;
   minRerankScore: number;
+  guidance?: TopicGuidance[];
 };
 
 export async function traceTurn(t: TurnTrace) {
@@ -62,7 +64,7 @@ export async function traceTurn(t: TurnTrace) {
       })),
       degraded: t.degraded,
     }, undefined, t.searchedAt);
-    await run.end({ memories: t.memories, degraded: t.degraded, min_rerank_score: t.minRerankScore });
+    await run.end({ memories: t.memories, guidance: t.guidance ?? [], degraded: t.degraded, min_rerank_score: t.minRerankScore });
     await post(run, search);
   } catch (e) {
     console.warn("langsmith: recall trace failed:", (e as Error).message);
@@ -78,6 +80,7 @@ export type AnswerTrace = {
   at: Date;
   memories: { text: string; status: string; source: string | null }[];
   answer: string;
+  guidance?: TopicGuidance[];
 };
 
 // The answer given from a recall (the voice agent's speech, or a written answer), posted once per turn when it has settled.
@@ -90,7 +93,7 @@ export async function traceAnswer(a: AnswerTrace) {
       run_type: "llm",
       project_name: project(),
       start_time: a.at.getTime(),
-      inputs: { question: a.question, memories: a.memories },
+      inputs: { question: a.question, memories: a.memories, guidance: a.guidance ?? [] },
       tags: [...channel(a.role), a.memories.length ? "has-memories" : "no-memories"],
       metadata: { thread_id: a.conversationId ?? a.turnId, turn_id: a.turnId, person_id: a.person_id, role: a.role,
         ...(a.role === "person" && { ls_provider: "elevenlabs" }) },
