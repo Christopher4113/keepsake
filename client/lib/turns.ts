@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 import type { Role, Session } from "./auth";
 import { getDb } from "./db";
 import type { Degraded } from "./recall";
+import type { TopicGuidance } from "./guidance";
 
 // Reads for the trace ("How did it know this?"). Shapes follow docs/api-reads.yaml.
 // The API routes and the trace pages both call these, so the rules live in one place.
@@ -37,6 +38,7 @@ export type Turn = Omit<TurnSummary, "result_count"> & {
   asked_by: { name: string | null; role: Role };
   results: TurnResult[];
   min_rerank_score: number;
+  guidance: TopicGuidance[];
 };
 
 const iso = (d: Date) => d.toISOString();
@@ -99,6 +101,7 @@ export async function getTurn(s: Session, id: string): Promise<Turn | null> {
     })),
     top_rerank_score: t.top_rerank_score ?? null,
     min_rerank_score: t.min_rerank_score,
+    guidance: t.guidance ?? [],
     degraded: t.degraded ?? null,
   };
 }

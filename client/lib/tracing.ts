@@ -1,6 +1,7 @@
 import type { ObjectId } from "mongodb";
 import { RunTree } from "langsmith/run_trees";
 import type { Candidate, Degraded, RecalledMemory } from "./recall";
+import type { TopicGuidance } from "./guidance";
 
 // LangSmith observability for the voice agent. Per turn: a "recall" trace (question, retriever step with every candidate
 // and its scores, what the agent was given) and an "agent_answer" run (question, memories, what the agent said).
@@ -32,6 +33,7 @@ export type TurnTrace = {
   memories: RecalledMemory[];
   degraded: Degraded;
   minRerankScore: number;
+  guidance?: TopicGuidance[];
 };
 
 export async function traceTurn(t: TurnTrace) {
@@ -57,7 +59,7 @@ export async function traceTurn(t: TurnTrace) {
       })),
       degraded: t.degraded,
     }, undefined, t.searchedAt);
-    await run.end({ memories: t.memories, degraded: t.degraded, min_rerank_score: t.minRerankScore });
+    await run.end({ memories: t.memories, guidance: t.guidance ?? [], degraded: t.degraded, min_rerank_score: t.minRerankScore });
     await post(run, search);
   } catch (e) {
     console.warn("langsmith: recall trace failed:", (e as Error).message);
@@ -72,6 +74,7 @@ export type AnswerTrace = {
   at: Date;
   memories: { text: string; status: string; source: string | null }[];
   answer: string;
+  guidance?: TopicGuidance[];
 };
 
 // The agent's spoken answer (from ElevenLabs), posted once per turn when it has settled.
@@ -84,7 +87,7 @@ export async function traceAnswer(a: AnswerTrace) {
       run_type: "llm",
       project_name: project(),
       start_time: a.at.getTime(),
-      inputs: { question: a.question, memories: a.memories },
+      inputs: { question: a.question, memories: a.memories, guidance: a.guidance ?? [] },
       tags: ["voice", "elevenlabs", a.memories.length ? "has-memories" : "no-memories"],
       metadata: { thread_id: a.conversationId ?? a.turnId, turn_id: a.turnId, person_id: a.person_id, ls_provider: "elevenlabs" },
     });
