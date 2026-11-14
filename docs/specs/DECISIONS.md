@@ -25,7 +25,7 @@ Current decisions, grouped by topic. Each item is what holds now. IDs in bracket
 - [A13] The admin's only extra power is managing household members (`POST /users` in `backend/`, already `requireFamilyAdmin`).
 - [D2] People never classify; they only confirm or deny. The system classifies.
 - [A2] `correct` stays as an endpoint: a family member creates a new re-embedded memory that supersedes the old one; a caregiver correction goes through the normal unverified + review path.
-- [A15] The `addMemory` response and each review card show the author as `from: {name, role}` (for example "from: Ravi (caregiver)").
+- [A15] The add response and each review card show the author as `from: {name, role}` (for example "from: Ravi (caregiver)").
 - [A16] Margaret does not add memories in the MVP. The seed no longer includes memories she authored (`ring_private`, `ruth_unverified`, `maple_unverified`).
 
 ## Read path
@@ -41,15 +41,16 @@ Current decisions, grouped by topic. Each item is what holds now. IDs in bracket
 
 ## Write path
 
-- [A15] There is one add endpoint, `addMemory`, for every writer (family and caregiver). The person cannot add a memory in the MVP ([A16]).
+- [A15] There is one add endpoint, `POST /api/memories`, for every writer (family and caregiver). The person cannot add a memory in the MVP ([A16]).
 - [R15] A caregiver add runs classify and saves the memory as `unverified` with `review.state: pending`, `flagged: true`, and an audit `write`.
 - Family writes with no proposed supersede are saved `verified` immediately.
 - [A6, A12] When a family member writes or corrects a fact that would supersede another, the API returns `{needs_confirmation: true, old:{memory_id, text, author_name, created_at}}` and saves nothing. The UI shows "Are you sure? This will supersede <old>".
 - [R21] A confirm resend carries `confirm: true` and `confirm_supersedes` set to the old `memory_id` that was shown. The server saves only if classify still proposes that id (for `correct`, the target is that id) and the old memory is still `verified`; otherwise it returns 409 with a fresh needs-confirmation payload, and nothing is saved. On a match, the new memory is saved `verified`, the old one is marked `superseded`, and audit `approve` is written, in one transaction.
-- [R20] `correct` inherits the old memory's scope; `addMemory` uses the scope the writer chose (caregiver writes are always `caregiver`).
+- [R20] A correction inherits the old memory's scope; an add uses the scope the writer chose (caregiver writes are always `caregiver`).
 - [A3] The writer's response lists only candidates in that writer's readable scopes ([R22]). The family review queue shows every candidate the family may read, including ones the original writer could not see.
-- [R23] The review queue is `GET /api/reviews`, backed by `listReviews(session)` in `client/lib`, which `page.tsx` may also call directly. It returns every memory with `review.state: pending`, each with the proposed old memory looked up (text, author, date) so the card can say "This will supersede <old>". Family only; caregivers get 403.
-- [R3] Confirm and deny run in one `session.withTransaction`. Confirm: the new memory becomes `verified`, `review.state` `approved`, `supersedes` set; the old memory becomes `superseded`; audit `approve`. With no proposal, it is a plain verify (audit `verify`). Deny: the new memory becomes `retracted`, `review.state` `denied`; the old memory is untouched; audit `deny`. `verifyMemory` still supersedes a proposed old memory even if the confirmer cannot read it.
+- [R23] The review queue is `GET /api/reviews`, backed by `listReviews(session)` in `client/lib/writes.ts`, which the dashboard may also call directly. It returns every memory with `review.state: pending`, each with the proposed old memory looked up (text, author, date) so the card can say "This will supersede <old>". Family only; caregivers get 403.
+- [R3] Confirm and deny run in one `session.withTransaction`. Confirm: the new memory becomes `verified`, `review.state` `approved`, `supersedes` set; the old memory becomes `superseded`; audit `approve`. With no proposal, it is a plain verify (audit `verify`). Deny: the new memory becomes `retracted`, `review.state` `denied`; the old memory is untouched; audit `deny`. Confirm still supersedes a proposed old memory even if the confirmer cannot read it.
+- [D-A9] The write path is a REST API for every surface (dashboard now, other clients later): `GET`/`POST /api/memories`, `DELETE /api/memories/:id`, `POST /api/memories/:id/corrections`, `POST /api/memories/:id/review {decision: confirm|deny}`, `GET /api/reviews`. A correction is a `POST` that creates a new memory, not a `PUT`, because memories are never edited in place. Logic lives in `client/lib/writes.ts`; the dashboard's server actions call it directly rather than fetching the routes.
 
 ## Classification
 

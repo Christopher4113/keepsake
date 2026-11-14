@@ -1,4 +1,4 @@
-import { ObjectId } from "mongodb";
+import { ObjectId, type ClientSession } from "mongodb";
 import { getDb } from "./db";
 import { embed as voyageEmbed } from "./voyage";
 import type { Role, Session } from "./auth";
@@ -18,16 +18,17 @@ export const visibleTo = (s: Session) => ({ person_id: s.person_id, scope: { $in
 // Required by the memories and audit_log validators.
 export const SCHEMA_VERSION = 1;
 
-export const actor =(s: Session) => ({ role: s.role, user_id: s.user_id });
+// A15: the author carries a display name, so reads never need a households lookup.
+export const actor = (s: Session) => ({ user_id: s.user_id, name: s.name, role: s.role });
 
 export async function audit(
   s: Session, memory_id: ObjectId, action: string, scope: Scope,
-  old_id: ObjectId | null = null, new_id: ObjectId | null = null,
+  old_id: ObjectId | null = null, new_id: ObjectId | null = null, session?: ClientSession,
 ) {
   // person_id + scope let the activity feed apply the same visibility rules; still no memory text here.
   await (await getDb()).collection("audit_log").insertOne({
     schema_version: SCHEMA_VERSION, memory_id, action, actor: actor(s), person_id: s.person_id, scope, old_id, new_id, at: new Date(),
-  });
+  }, { session });
 }
 
 // Best effort: a Voyage failure leaves embedding [] instead of losing the write. scripts/setup-vectors.mjs backfills it.
