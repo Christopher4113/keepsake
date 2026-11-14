@@ -1,9 +1,11 @@
+import { LogOut } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { logout } from "./login/actions";
 
-export function LogoutButton() {
+export function LogoutButton({ className }: { className?: string }) {
   return (
     <form action={logout}>
-      <button className="rounded border px-3 py-1 text-sm">Sign out</button>
+      <Button variant="ghost" size="sm" className={className}><LogOut /> Sign out</Button>
     </form>
   );
 }

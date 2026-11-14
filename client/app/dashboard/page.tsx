@@ -1,8 +1,19 @@
 import type { WithId, Document, ObjectId } from "mongodb";
+import { Check, Clock, Eraser, Heart, History, Link2, PencilLine, Plus, Replace, X } from "lucide-react";
 import { requireAuth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { SCOPES, visibleTo } from "@/lib/memories";
 import { userService } from "@/lib/userService";
+import { cn } from "@/lib/utils";
+import { Logo } from "@/components/logo";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import { LogoutButton } from "../logout-button";
 import { ConfirmButton } from "./confirm-button";
 import { addMemory, correctMemory, denyMemory, forgetMemory, saveGuidance, verifyMemory } from "./actions";
@@ -11,9 +22,14 @@ const VERBS: Record<string, string> = {
   write: "added", verify: "verified", approve: "approved", deny: "denied",
   correct: "corrected", forget: "forgot", expire: "expired", rescope: "rescoped",
 };
+const SCOPE_STYLE: Record<string, string> = {
+  family: "bg-secondary text-primary",
+  caregiver: "bg-success/10 text-success",
+  private: "bg-muted text-muted-foreground",
+};
 const fmt = (d?: Date | null) => d?.toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
-const btn = "rounded border px-2 py-1 text-sm";
-const input = "rounded border px-2 py-1";
+const select = "h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
+const panel = "rounded-2xl border-border/70 shadow-[0_20px_50px_-35px_rgba(80,40,50,0.35)]";
 
 export default async function DashboardPage() {
   const { session: me, token } = await requireAuth(["family", "caregiver"]);
@@ -43,44 +59,57 @@ export default async function DashboardPage() {
     const id = m._id.toString();
     const inReview = review.includes(m);
     const replaces = m.review?.proposed_supersedes && textOf[m.review.proposed_supersedes.toString()];
-    const related = (m.review?.candidates ?? [])
+    const related: string[] = (m.review?.candidates ?? [])
       .filter((c: { label: string; memory_id: ObjectId }) => c.label === "related" && textOf[c.memory_id.toString()])
       .map((c: { memory_id: ObjectId }) => textOf[c.memory_id.toString()]);
 
     return (
-      <li className="flex flex-col gap-2 rounded border p-3">
-        <p>{m.text}</p>
-        {replaces && <p className="text-sm">Would replace: <span className="line-through">{replaces}</span></p>}
-        {related.map((t: string) => <p key={t} className="text-sm text-zinc-600">Related: {t}</p>)}
-        <p className="text-xs text-zinc-500">
-          {m.scope} · from {names[m.source.user_id] ?? m.source.user_id} · {fmt(m.created_at)}
-          {m.expires_at && <> · expires {fmt(m.expires_at)}</>}
-          {m.supersedes && <> · corrected</>}
-        </p>
+      <li className="space-y-3 px-6 py-5">
+        <p className={cn(inReview ? "font-serif text-2xl leading-snug" : "text-[15px]")}>{m.text}</p>
+        {replaces && (
+          <p className="flex gap-2 rounded-xl bg-muted px-4 py-2.5 text-sm text-muted-foreground">
+            <Replace className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>Would replace: <span className="line-through">{replaces}</span></span>
+          </p>
+        )}
+        {related.map((t) => (
+          <p key={t} className="flex gap-2 text-sm text-muted-foreground"><Link2 className="mt-0.5 size-4 shrink-0" aria-hidden /> Related: {t}</p>
+        ))}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <Badge className={cn("rounded-full border-0 capitalize", SCOPE_STYLE[m.scope])}>{m.scope}</Badge>
+          <span>from {names[m.source.user_id] ?? m.source.user_id}</span>
+          <span>{fmt(m.created_at)}</span>
+          {m.expires_at && <span className="flex items-center gap-1"><Clock className="size-3" aria-hidden /> expires {fmt(m.expires_at)}</span>}
+          {m.supersedes && <span className="flex items-center gap-1"><PencilLine className="size-3" aria-hidden /> corrected</span>}
+        </div>
         <div className="flex flex-wrap items-start gap-2">
           {inReview && (
             <>
               <form action={verifyMemory}>
                 <input type="hidden" name="id" value={id} />
-                <button className={btn}>{replaces ? "Approve and replace" : "Approve"}</button>
+                <Button size="sm" className="rounded-full"><Check /> {replaces ? "Approve and replace" : "Approve"}</Button>
               </form>
               <form action={denyMemory}>
                 <input type="hidden" name="id" value={id} />
-                <button className={btn}>Deny</button>
+                <Button size="sm" variant="outline" className="rounded-full"><X /> Deny</Button>
               </form>
             </>
           )}
           <details>
-            <summary className={`${btn} cursor-pointer list-none`}>Correct</summary>
-            <form action={correctMemory} className="mt-2 flex gap-2">
+            <summary className="inline-flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-full px-3 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+              <PencilLine className="size-4" aria-hidden /> Correct
+            </summary>
+            <form action={correctMemory} className="mt-2 flex w-full flex-wrap gap-2 sm:w-[28rem]">
               <input type="hidden" name="id" value={id} />
-              <input name="text" defaultValue={m.text} required aria-label="Corrected text" className={`${input} w-80`} />
-              <button className={btn}>Save</button>
+              <Input name="text" defaultValue={m.text} required aria-label="Corrected text" className="min-w-0 flex-1" />
+              <Button size="sm" className="h-9 rounded-full">Save</Button>
             </form>
           </details>
           <form action={forgetMemory}>
             <input type="hidden" name="id" value={id} />
-            <ConfirmButton message="Forget this memory? This can't be undone." className={`${btn} text-red-600`}>Forget</ConfirmButton>
+            <ConfirmButton message="Forget this memory? This can't be undone." size="sm" variant="ghost" className="rounded-full text-destructive hover:bg-destructive/10 hover:text-destructive">
+              <Eraser /> Forget
+            </ConfirmButton>
           </form>
         </div>
       </li>
@@ -88,76 +117,161 @@ export default async function DashboardPage() {
   };
 
   return (
-    <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8 p-4">
-      <header className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">{person?.name}&apos;s memory</h1>
-          <p className="text-sm text-zinc-500">
-            Signed in as {me.name} ({me.role}) · Care circle: {team.map((p) => `${p.name} (${p.relation ?? p.role})`).join(", ")}
-          </p>
+    <div className="flex min-h-full flex-1 flex-col">
+      <header className="sticky top-0 z-10 border-b bg-background/85 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
+          <Logo href="/dashboard" />
+          <div className="flex items-center gap-3">
+            <span className="hidden text-sm text-muted-foreground sm:inline">
+              {me.name} · <span className="capitalize">{me.role}</span>
+            </span>
+            <LogoutButton />
+          </div>
         </div>
-        <LogoutButton />
       </header>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Needs review ({review.length})</h2>
-        {review.length ? <ul className="flex flex-col gap-2">{review.map((m) => <Memory key={m._id.toString()} m={m} />)}</ul>
-          : <p className="text-sm text-zinc-500">Nothing waiting for review.</p>}
-      </section>
+      <main className="mx-auto w-full max-w-6xl flex-1 space-y-8 px-4 py-10 sm:px-6">
+        <section className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
+          <div className="space-y-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
+              {me.role === "family" ? "Family space" : "Care team space"}
+            </p>
+            <h1 className="font-serif text-5xl leading-tight">{person?.name}&apos;s <em className="text-primary">memory</em></h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex -space-x-2">
+              {team.map((p) => (
+                <Avatar key={p.user_id} className="size-9 ring-2 ring-background" title={`${p.name} (${p.relation ?? p.role})`}>
+                  <AvatarFallback className={cn("font-serif", p.role === "person" ? "bg-secondary text-primary" : p.role === "caregiver" ? "bg-success/10 text-success" : "bg-muted")}>
+                    {p.name[0]}
+                  </AvatarFallback>
+                </Avatar>
+              ))}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Care circle<br />
+              <span className="text-foreground">{team.map((p) => p.name).join(", ")}</span>
+            </p>
+          </div>
+        </section>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Add a memory</h2>
-        <form action={addMemory} className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-1 flex-col gap-1 text-sm">What should {person?.name} remember?
-            <input name="text" required className={input} />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">Who can see it
-            <select name="scope" className={input}>{SCOPES[me.role].map((s) => <option key={s}>{s}</option>)}</select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm">Expires (optional)
-            <input name="expires_at" type="datetime-local" className={input} />
-          </label>
-          <button className="rounded bg-foreground px-3 py-1 text-background">Add</button>
-        </form>
-      </section>
+        <div className="grid items-start gap-6 lg:grid-cols-[1fr_22rem]">
+          <div className="space-y-6">
+            <Card className={cn(panel, "gap-0 py-0")}>
+              <CardHeader className="flex flex-row items-center justify-between gap-4 border-b px-6 py-5">
+                <div className="space-y-1">
+                  <CardTitle className="font-serif text-2xl font-normal">Needs your review</CardTitle>
+                  <CardDescription>New things {person?.name} or the care team mentioned. Nothing is treated as true until you approve it.</CardDescription>
+                </div>
+                <Badge className="rounded-full bg-primary px-2.5 text-primary-foreground">{review.length}</Badge>
+              </CardHeader>
+              {review.length ? (
+                <ul className="divide-y">{review.map((m) => <Memory key={m._id.toString()} m={m} />)}</ul>
+              ) : (
+                <div className="flex flex-col items-center gap-2 px-6 py-12 text-center text-muted-foreground">
+                  <Check className="size-6 text-success" aria-hidden />
+                  <p>You&apos;re all caught up.</p>
+                </div>
+              )}
+            </Card>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Verified memories ({verified.length})</h2>
-        <ul className="flex flex-col gap-2">{verified.map((m) => <Memory key={m._id.toString()} m={m} />)}</ul>
-      </section>
+            <Card className={cn(panel, "gap-0 py-0")}>
+              <CardHeader className="flex flex-row items-center justify-between gap-4 border-b px-6 py-5">
+                <div className="space-y-1">
+                  <CardTitle className="font-serif text-2xl font-normal">Verified memories</CardTitle>
+                  <CardDescription>What Keepsake can tell {person?.name}.</CardDescription>
+                </div>
+                <Badge variant="secondary" className="rounded-full px-2.5">{verified.length}</Badge>
+              </CardHeader>
+              <ul className="divide-y">{verified.map((m) => <Memory key={m._id.toString()} m={m} />)}</ul>
+            </Card>
+          </div>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Conversation guidance</h2>
-        <p className="text-sm text-zinc-500">How the voice agent should handle sensitive topics.</p>
-        {guidance.map((g) => me.role === "family" ? (
-          <form key={g.topic} action={saveGuidance} className="flex flex-col gap-1">
-            <input type="hidden" name="topic" value={g.topic} />
-            <label className="text-sm font-medium capitalize" htmlFor={`g-${g.topic}`}>{g.topic}</label>
-            <textarea id={`g-${g.topic}`} name="guidance" defaultValue={g.guidance} rows={2} className={input} />
-            <button className={`${btn} self-start`}>Save</button>
-          </form>
-        ) : (
-          <div key={g.topic}><p className="text-sm font-medium capitalize">{g.topic}</p><p>{g.guidance}</p></div>
-        ))}
-        {me.role === "family" && (
-          <form action={saveGuidance} className="flex flex-wrap items-end gap-2">
-            <label className="flex flex-col gap-1 text-sm">New topic<input name="topic" required className={input} /></label>
-            <label className="flex flex-1 flex-col gap-1 text-sm">Guidance<input name="guidance" required className={input} /></label>
-            <button className={btn}>Add topic</button>
-          </form>
-        )}
-      </section>
+          <aside className="space-y-6 lg:sticky lg:top-24">
+            <Card className={panel}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 font-serif text-xl font-normal"><Plus className="size-4 text-primary" aria-hidden /> Add a memory</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form action={addMemory} className="space-y-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="new-text">What should {person?.name} remember?</Label>
+                    <Textarea id="new-text" name="text" required rows={3} placeholder="Anna is bringing dinner at 6 tonight" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="grid gap-2">
+                      <Label htmlFor="new-scope">Who can see it</Label>
+                      <select id="new-scope" name="scope" className={select}>
+                        {SCOPES[me.role].map((s) => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
+                      </select>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="new-exp">Expires</Label>
+                      <Input id="new-exp" name="expires_at" type="datetime-local" className="px-2 text-xs" />
+                    </div>
+                  </div>
+                  <Button className="w-full rounded-full">Add memory</Button>
+                </form>
+              </CardContent>
+            </Card>
 
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-medium">Activity</h2>
-        {activity.length ? (
-          <ul className="text-sm">
-            {activity.map((a) => (
-              <li key={a._id.toString()}>{fmt(a.at)}: {names[a.actor.user_id] ?? a.actor.user_id} {VERBS[a.action] ?? a.action} a {a.scope} memory</li>
-            ))}
-          </ul>
-        ) : <p className="text-sm text-zinc-500">No changes yet.</p>}
-      </section>
-    </main>
+            <Card className={panel}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 font-serif text-xl font-normal"><Heart className="size-4 text-primary" aria-hidden /> Conversation guidance</CardTitle>
+                <CardDescription>How Keepsake handles sensitive topics.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {guidance.map((g) => me.role === "family" ? (
+                  <form key={g.topic} action={saveGuidance} className="space-y-2">
+                    <input type="hidden" name="topic" value={g.topic} />
+                    <Label htmlFor={`g-${g.topic}`} className="capitalize">{g.topic}</Label>
+                    <Textarea id={`g-${g.topic}`} name="guidance" defaultValue={g.guidance} rows={3} />
+                    <Button size="sm" variant="outline" className="rounded-full">Save</Button>
+                  </form>
+                ) : (
+                  <div key={g.topic} className="space-y-1">
+                    <p className="text-sm font-medium capitalize">{g.topic}</p>
+                    <p className="text-sm text-muted-foreground">{g.guidance}</p>
+                  </div>
+                ))}
+                {me.role === "family" && (
+                  <>
+                    <Separator />
+                    <form action={saveGuidance} className="space-y-2">
+                      <Label htmlFor="g-new-topic">New topic</Label>
+                      <Input id="g-new-topic" name="topic" required placeholder="e.g. driving" />
+                      <Textarea name="guidance" required rows={2} aria-label="Guidance for the new topic" placeholder="How should Keepsake respond?" />
+                      <Button size="sm" variant="outline" className="rounded-full"><Plus /> Add topic</Button>
+                    </form>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className={panel}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 font-serif text-xl font-normal"><History className="size-4 text-primary" aria-hidden /> Activity</CardTitle>
+                <CardDescription>Who changed what. The words themselves are never kept here.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {activity.length ? (
+                  <ol className="space-y-3 text-sm">
+                    {activity.map((a) => (
+                      <li key={a._id.toString()} className="flex gap-3">
+                        <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary/60" aria-hidden />
+                        <span>
+                          <span className="font-medium">{names[a.actor.user_id] ?? a.actor.user_id}</span> {VERBS[a.action] ?? a.action} a {a.scope} memory
+                          <span className="block text-xs text-muted-foreground">{fmt(a.at)}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : <p className="text-sm text-muted-foreground">No changes yet.</p>}
+              </CardContent>
+            </Card>
+          </aside>
+        </div>
+      </main>
+    </div>
   );
 }
