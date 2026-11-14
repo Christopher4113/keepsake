@@ -1,0 +1,684 @@
+openapi: 3.1.0
+info:
+  title: Keepsake read API
+  version: "1.0.0"
+  summary: Read-path contract for recall, turns and the trace (Track A)
+  description: |
+    Read-path contract for the voice client, the ElevenLabs teammate and
+    the trace screen. Writes (add, review, correct) are in
+    `api-writes.yaml`.
+
+    All routes are HTTP routes in the Next.js client (`client/app/api`).
+    Search logic lives in `client/lib/recall.ts`; the agent prompt lives
+    in `client/lib/prompt.ts`.
+
+    Auth: the `keepsake_session` cookie (JWT issued by the user service).
+    Trust the token for `user_id` only. Margaret (role `person`) is the
+    only caller of the voice routes. The trace is family only for the
+    MVP (D-A2); caregivers get 403.
+
+    Recall flow, once per question:
+    1. The agent calls its `recall` client tool. The voice client posts
+       to `POST /api/talk/recall` and hands the JSON back to the agent.
+    2. The server embeds the question (voyage-3.5, `input_type: query`),
+       runs `$vectorSearch` on `memory_vec` pre-filtered by `person_id`,
+       readable scopes and `status: verified` (numCandidates 100, limit
+       20), reranks with rerank-2.5 (top 5), and drops anything below
+       `MIN_RERANK_SCORE`. Unverified memories never reach the agent
+       (D-A1).
+    3. The server writes a `turns` doc, including empty ones (D-A7), and
+       returns its `turn_id`.
+    4. Everything the agent says after that recall, until the next one,
+       is posted to `POST /api/turns/{id}/answer`.
+    5. Family opens the trace (`GET /api/turns`, `GET /api/turns/{id}`)
+       to see the question, the answer and each memory used.
+
+    Voyage failures degrade instead of failing the request (D-A6).
+    Timeouts are 3s for embed and 2s for rerank, with no retries. The
+    turn records what happened in `degraded`.
+
+    `MIN_RERANK_SCORE` is 0.5, calibrated on the seed with
+    `client/scripts/calibrate-recall.mts`: in-knowledge questions scored
+    0.646-0.882, out-of-knowledge 0.256-0.371.
+
+    Examples use the seed household: Margaret (person), Anna (family,
+    admin), David (family), Ravi (caregiver). ObjectIds are
+    illustrative.
+
+servers:
+  - url: /
+    description: Next.js client (`client/`)
+
+tags:
+  - name: Voice
+    description: Routes the voice client calls during a conversation. Margaret only.
+  - name: Trace
+    description: '"How did it know this?" Family only.'
+
+security:
+  - cookieAuth: []
+
+paths:
+  /api/talk/session:
+    get:
+      operationId: startTalkSession
+      tags: [Voice]
+      summary: Start a voice session
+      description: |
+        Returns a short-lived ElevenLabs signed URL, so the API key never
+        reaches the browser, plus the dynamic variables the prompt needs.
+        Pass `name` and `today` as `dynamicVariables` when starting the
+        ElevenLabs session.
+
+        `today` is computed on the server in `America/Toronto` (D-A5).
+        Households have no timezone field yet.
+
+        If the key can't mint a signed URL, the response carries
+        `agentId` instead, for a public agent.
+      responses:
+        "200":
+          description: Session details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TalkSession"
+              examples:
+                signed:
+                  summary: Margaret presses "Talk to me"
+                  value:
+                    signedUrl: wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_x&conversation_signature=sig
+                    name: Margaret
+                    today: Saturday, November 14, 2026
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/talk/recall:
+    post:
+      operationId: recall
+      tags: [Voice]
+      summary: Recall memories for a question (the agent's recall tool)
+      description: |
+        Backs the ElevenLabs client tool `recall {query}`. The voice
+        client adds `conversation_id` from the ElevenLabs `onConnect`
+        event, then returns this response to the agent as a JSON
+        string.
+
+        Returns up to 5 verified memories, best first. An empty
+        `memories` list is a normal answer: nothing scored above
+        `MIN_RERANK_SCORE`, and the agent should say "I'm not sure.
+        Let's ask your family."
+
+        Each memory carries:
+        - `added_on`: the date it was written down (America/Toronto).
+          The agent reads "today" or "this morning" in the text against
+          this date, not against today's date.
+        - `source`: who added it, so the agent can say "Ravi mentioned…"
+          (D-A4).
+
+        Every call writes one `turns` doc, even when `memories` is
+        empty. Keep `turn_id` and post the agent's answer to it.
+
+        Degraded paths (the response shape doesn't change):
+        - Embed fails: `memories` is empty.
+        - Rerank fails: vector order, cut at `MIN_VECTOR_SCORE` (0.7).
+        - `$vectorSearch` throws (index building or missing): keyword
+          match on the text.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecallRequest"
+            examples:
+              glasses:
+                summary: Margaret asks where her glasses are
+                value:
+                  query: Where are my reading glasses?
+                  conversation_id: conv_01jcx3k9
+      responses:
+        "200":
+          description: Recalled memories and the turn they were logged under.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecallResult"
+              examples:
+                found:
+                  summary: In knowledge
+                  value:
+                    turn_id: "672e00000000000000000101"
+                    memories:
+                      - text: Reading glasses are usually on the kitchen windowsill
+                        status: verified
+                        added_on: "2026-11-14"
+                        source:
+                          role: caregiver
+                          name: Ravi
+                empty:
+                  summary: Out of knowledge (best score 0.30, below the 0.5 cutoff)
+                  value:
+                    turn_id: "672e00000000000000000102"
+                    memories: []
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/turns/{id}/answer:
+    post:
+      operationId: saveTurnAnswer
+      tags: [Voice]
+      summary: Save what the agent said after a recall
+      description: |
+        The voice client posts the agent's spoken answer for the latest
+        turn. It collects every agent message after a recall, until the
+        next recall, keyed by ElevenLabs `response_id`, and sends the
+        whole answer joined with spaces each time it grows. Repeating a
+        call just overwrites the answer, so retries are safe.
+
+        Only the person who asked can save the answer. Any other turn
+        looks missing (404), so turn ids can't be probed.
+      parameters:
+        - $ref: "#/components/parameters/TurnId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnswerRequest"
+            examples:
+              glasses:
+                summary: The agent's answer about the glasses
+                value:
+                  answer: Ravi mentioned your reading glasses are usually on the kitchen windowsill.
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnswerResult"
+              example:
+                saved: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/turns:
+    get:
+      operationId: listTurns
+      tags: [Trace]
+      x-status: planned (Track A trace PR)
+      summary: List turns, newest first
+      description: |
+        The trace list. Family only (any family member, including the
+        admin); caregivers get 403 (D-A2). Returns the household's
+        turns, newest first, using the `{person_id: 1, at: -1}` index.
+
+        The trace screen polls this every 3 seconds, so a question
+        Margaret just asked shows up without a refresh. Page with
+        `before` set to the oldest `at` already shown.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: before
+          in: query
+          required: false
+          description: Only turns strictly older than this time.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Turns, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TurnList"
+              examples:
+                family_trace:
+                  summary: Anna opens the trace
+                  value:
+                    turns:
+                      - id: "672e00000000000000000102"
+                        at: "2026-11-14T15:02:10-05:00"
+                        question: What is the capital of France?
+                        answer: I'm not sure. Let's ask your family.
+                        result_count: 0
+                        top_rerank_score: 0.302
+                        degraded: null
+                      - id: "672e00000000000000000101"
+                        at: "2026-11-14T15:01:30-05:00"
+                        question: Where are my reading glasses?
+                        answer: Ravi mentioned your reading glasses are usually on the kitchen windowsill.
+                        result_count: 1
+                        top_rerank_score: 0.815
+                        degraded: null
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/turns/{id}:
+    get:
+      operationId: getTurn
+      tags: [Trace]
+      x-status: planned (Track A trace PR)
+      summary: One turn, with every memory the agent was given
+      description: |
+        The trace detail. Family only; caregivers get 403 (D-A2).
+
+        `results` is a snapshot taken when the question was asked: the
+        memory text, status and author the agent actually saw. Each
+        result also carries `current_status`, read live, so the screen
+        can show "since superseded" when family has replaced that memory
+        after the fact.
+
+        An empty `results` list with `top_rerank_score` and
+        `min_rerank_score` explains an "I'm not sure" answer: the best
+        memory scored below the cutoff.
+      parameters:
+        - $ref: "#/components/parameters/TurnId"
+      responses:
+        "200":
+          description: The turn.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Turn"
+              examples:
+                glasses:
+                  summary: '"How did it know this?" for the glasses question'
+                  value:
+                    id: "672e00000000000000000101"
+                    at: "2026-11-14T15:01:30-05:00"
+                    conversation_id: conv_01jcx3k9
+                    asked_by:
+                      name: Margaret
+                      role: person
+                    question: Where are my reading glasses?
+                    answer: Ravi mentioned your reading glasses are usually on the kitchen windowsill.
+                    results:
+                      - memory_id: "672e00000000000000000005"
+                        text: Reading glasses are usually on the kitchen windowsill
+                        status: verified
+                        current_status: superseded
+                        scope: caregiver
+                        author_name: Ravi
+                        author_role: caregiver
+                        created_at: "2026-10-20T11:00:00-04:00"
+                        vector_score: 0.83
+                        rerank_score: 0.815
+                    top_rerank_score: 0.815
+                    min_rerank_score: 0.5
+                    degraded: null
+                empty:
+                  summary: An out-of-knowledge question
+                  value:
+                    id: "672e00000000000000000102"
+                    at: "2026-11-14T15:02:10-05:00"
+                    conversation_id: conv_01jcx3k9
+                    asked_by:
+                      name: Margaret
+                      role: person
+                    question: What is the capital of France?
+                    answer: I'm not sure. Let's ask your family.
+                    results: []
+                    top_rerank_score: 0.302
+                    min_rerank_score: 0.5
+                    degraded: null
+                rerank_down:
+                  summary: Rerank timed out; vector order was used
+                  value:
+                    id: "672e00000000000000000103"
+                    at: "2026-11-14T15:05:00-05:00"
+                    conversation_id: conv_01jcx3k9
+                    asked_by:
+                      name: Margaret
+                      role: person
+                    question: When does Ravi come?
+                    answer: Ravi comes on weekday mornings at 10.
+                    results:
+                      - memory_id: "672e00000000000000000007"
+                        text: Ravi visits on weekday mornings at 10
+                        status: verified
+                        current_status: verified
+                        scope: caregiver
+                        author_name: Anna
+                        author_role: family
+                        created_at: "2026-10-25T10:00:00-04:00"
+                        vector_score: 0.81
+                        rerank_score: null
+                    top_rerank_score: null
+                    min_rerank_score: 0.5
+                    degraded: rerank_timeout
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: keepsake_session
+      description: |
+        JWT issued by the user service at login and stored in the
+        `keepsake_session` cookie. Trust `user_id` only; resolve
+        `person_id` and `role` from `households.members`.
+
+  parameters:
+    TurnId:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ObjectId"
+
+  responses:
+    BadRequest:
+      description: A required field is missing, or a value is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: bad_request
+              message: query is required
+    Unauthorized:
+      description: Not signed in.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: unauthorized
+              message: Sign in required
+    Forbidden:
+      description: The caller's role can't use this route (voice routes are Margaret only; the trace is family only).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: forbidden
+              message: Only family can view the trace
+    NotFound:
+      description: The turn doesn't exist, or it isn't visible to this caller.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: not_found
+              message: Turn not found
+
+  schemas:
+    ObjectId:
+      type: string
+      pattern: "^[a-fA-F0-9]{24}$"
+      description: MongoDB ObjectId, 24-character hex string.
+      examples:
+        - "672e00000000000000000101"
+
+    Scope:
+      type: string
+      enum: [family, caregiver]
+
+    MemoryStatus:
+      type: string
+      enum: [unverified, verified, superseded, retracted]
+
+    Role:
+      type: string
+      enum: [person, family, caregiver]
+
+    Degraded:
+      type: [string, "null"]
+      enum: [null, embed_error, rerank_timeout, rerank_error, regex]
+      description: |
+        null when the full pipeline ran. Otherwise:
+        - `embed_error`: the question couldn't be embedded; no memories returned.
+        - `rerank_timeout` / `rerank_error`: rerank failed; vector order with the `MIN_VECTOR_SCORE` floor.
+        - `regex`: `$vectorSearch` threw (index building or missing); keyword match, no scores.
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [bad_request, unauthorized, forbidden, not_found]
+            message:
+              type: string
+
+    TalkSession:
+      type: object
+      additionalProperties: false
+      required: [name, today]
+      description: Exactly one of `signedUrl` or `agentId` is present.
+      properties:
+        signedUrl:
+          type: string
+          description: ElevenLabs signed WebSocket URL, valid for a short time.
+        agentId:
+          type: string
+          description: Fallback when no signed URL could be minted (public agent only).
+        name:
+          type: string
+          description: The `name` dynamic variable.
+        today:
+          type: string
+          description: The `today` dynamic variable, a long date in America/Toronto.
+          examples:
+            - Saturday, November 14, 2026
+
+    RecallRequest:
+      type: object
+      additionalProperties: false
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: The question, as the agent phrased it. Trimmed; longer input is cut at 500 characters.
+        conversation_id:
+          type: [string, "null"]
+          maxLength: 200
+          description: ElevenLabs conversation id, added by the voice client. Groups a session's turns in the trace.
+
+    RecalledMemory:
+      type: object
+      additionalProperties: false
+      required: [text, status, added_on, source]
+      properties:
+        text:
+          type: string
+        status:
+          type: string
+          enum: [verified]
+          description: Always `verified` (D-A1). Kept so the contract can widen later.
+        added_on:
+          type: string
+          format: date
+          description: When the memory was written down, as a date in America/Toronto.
+        source:
+          type: object
+          additionalProperties: false
+          required: [role, name]
+          properties:
+            role:
+              $ref: "#/components/schemas/Role"
+            name:
+              type: [string, "null"]
+              description: Author's display name from `households.members`; null if they've left the household.
+
+    RecallResult:
+      type: object
+      additionalProperties: false
+      required: [turn_id, memories]
+      properties:
+        turn_id:
+          $ref: "#/components/schemas/ObjectId"
+        memories:
+          type: array
+          maxItems: 5
+          description: Best first. Empty means "I'm not sure. Let's ask your family."
+          items:
+            $ref: "#/components/schemas/RecalledMemory"
+
+    AnswerRequest:
+      type: object
+      additionalProperties: false
+      required: [answer]
+      properties:
+        answer:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: Everything the agent has said since this turn's recall, joined with spaces.
+
+    AnswerResult:
+      type: object
+      additionalProperties: false
+      required: [saved]
+      properties:
+        saved:
+          type: boolean
+
+    TurnSummary:
+      type: object
+      additionalProperties: false
+      required: [id, at, question, answer, result_count, top_rerank_score, degraded]
+      properties:
+        id:
+          $ref: "#/components/schemas/ObjectId"
+        at:
+          type: string
+          format: date-time
+        question:
+          type: string
+        answer:
+          type: [string, "null"]
+          description: null until the voice client posts it.
+        result_count:
+          type: integer
+          minimum: 0
+          maximum: 5
+        top_rerank_score:
+          type: [number, "null"]
+        degraded:
+          $ref: "#/components/schemas/Degraded"
+
+    TurnList:
+      type: object
+      additionalProperties: false
+      required: [turns]
+      properties:
+        turns:
+          type: array
+          items:
+            $ref: "#/components/schemas/TurnSummary"
+
+    TurnResult:
+      type: object
+      additionalProperties: false
+      required: [memory_id, text, status, current_status, scope, author_name, author_role, created_at, vector_score, rerank_score]
+      description: One memory the agent was given, as it was at question time.
+      properties:
+        memory_id:
+          $ref: "#/components/schemas/ObjectId"
+        text:
+          type: string
+        status:
+          $ref: "#/components/schemas/MemoryStatus"
+        current_status:
+          description: The memory's status now, read live. null if it was deleted.
+          oneOf:
+            - $ref: "#/components/schemas/MemoryStatus"
+            - type: "null"
+        scope:
+          $ref: "#/components/schemas/Scope"
+        author_name:
+          type: [string, "null"]
+        author_role:
+          $ref: "#/components/schemas/Role"
+        created_at:
+          type: string
+          format: date-time
+        vector_score:
+          type: [number, "null"]
+          description: Atlas vectorSearchScore (cosine, 0-1). null on the keyword fallback.
+        rerank_score:
+          type: [number, "null"]
+          description: rerank-2.5 relevance score. null when rerank failed or on the keyword fallback.
+
+    Turn:
+      type: object
+      additionalProperties: false
+      required: [id, at, conversation_id, asked_by, question, answer, results, top_rerank_score, min_rerank_score, degraded]
+      properties:
+        id:
+          $ref: "#/components/schemas/ObjectId"
+        at:
+          type: string
+          format: date-time
+        conversation_id:
+          type: [string, "null"]
+        asked_by:
+          type: object
+          additionalProperties: false
+          required: [name, role]
+          properties:
+            name:
+              type: [string, "null"]
+            role:
+              $ref: "#/components/schemas/Role"
+        question:
+          type: string
+        answer:
+          type: [string, "null"]
+        results:
+          type: array
+          maxItems: 5
+          items:
+            $ref: "#/components/schemas/TurnResult"
+        top_rerank_score:
+          type: [number, "null"]
+          description: Best rerank score seen, even if the cutoff dropped it.
+        min_rerank_score:
+          type: number
+          description: The cutoff in force when this turn ran.
+        degraded:
+          $ref: "#/components/schemas/Degraded"
