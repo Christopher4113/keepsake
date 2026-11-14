@@ -41,7 +41,7 @@ export async function getMemberSession(): Promise<Session | null> {
   const household = await (await getDb())
     .collection<{ person_id: string; members: { user_id: string; name: string; role: Role }[] }>("households")
     .findOne({ "members.user_id": user_id }, { projection: { person_id: 1, members: { $elemMatch: { user_id } } } });
-  const member = household?.members?.[0];
+  const member = household?.members?.find((m) => m.user_id === user_id);
   return household && member ? { user_id, name: member.name, role: member.role, person_id: household.person_id } : null;
 }
 
@@ -52,8 +52,9 @@ export async function destroySession() {
 export const homeFor = (role: Role) => (role === "person" ? "/talk" : "/dashboard");
 
 // For pages, actions and route handlers: redirects if signed out or the wrong role.
+// Household and role are re-read like getMemberSession, so a member who was removed or moved loses access at once.
 export async function requireSession(roles?: Role[]) {
-  const s = await getSession();
+  const s = await getMemberSession();
   if (!s) redirect("/login");
   if (roles && !roles.includes(s.role)) redirect(homeFor(s.role));
   return s;

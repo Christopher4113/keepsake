@@ -14,7 +14,7 @@ cd backend && npm install && npm run dev           # http://127.0.0.1:4000
 npm test                                           # offline, uses mongodb-memory-server
 ```
 
-Demo logins: `<user_id>@keepsake.test`, password `keepsake`. The users are margaret (person), anna (family admin), ravi (caregiver), and harold and sam (second household).
+Demo logins: `<user_id>@keepsake.test`, password `keepsake`. The users are margaret (person), anna (family admin), david (family) and ravi (caregiver), and in a second household harold (person), sam (family admin) and renae (caregiver).
 
 ## Auth model
 
