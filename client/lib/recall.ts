@@ -4,6 +4,7 @@ import { SCHEMA_VERSION, SCOPES, type Scope } from "./memories";
 import type { Role, Session } from "./auth";
 import { embed, rerank, VoyageError } from "./voyage";
 import { isoDate } from "./time";
+import { traceTurn } from "./tracing";
 
 // Calibrated on the seed data (scripts/calibrate-recall.mts, Nov 14): in-knowledge 0.646-0.882, out-of-knowledge 0.256-0.371.
 export const MIN_RERANK_SCORE = Number(process.env.MIN_RERANK_SCORE ?? 0.5);
@@ -85,18 +86,25 @@ async function keywordSearch(filter: object, query: string): Promise<Candidate[]
 // What the voice agent receives. source.name lets it say "Ravi said…".
 export type RecalledMemory = { text: string; status: string; added_on: string; source: { role: Role; name: string | null } };
 
+// Rerank scores are cut off here. Vector fallback was already floored; keyword fallback has no scores.
+// Shared with scripts/eval-recall.mts so the eval scores exactly what the agent would get.
+export const applyCutoff = (candidates: Candidate[]) =>
+  candidates.filter((c) => c.rerank_score === null || c.rerank_score >= MIN_RERANK_SCORE);
+
 // Search, apply the cutoff, and log the turn for the trace. Empty memories means "I'm not sure, let's ask your family".
+// `trace` sends the turn to LangSmith; the route runs it after responding so it never delays the agent.
 export async function recall(s: Session, query: string, conversation_id: string | null) {
   const db = await getDb();
+  const startedAt = Date.now();
   const [{ candidates, degraded }, household] = await Promise.all([
     search(s.person_id, readableScopes(s.role), query),
     db.collection("households").findOne({ person_id: s.person_id }, { projection: { members: 1 } }),
   ]);
+  const searchedAt = Date.now();
 
   const members = new Map<string, string>((household?.members ?? []).map((m: { user_id: string; name: string }) => [m.user_id, m.name]));
   const author = (c: Candidate) => c.source.name ?? members.get(c.source.user_id) ?? null;
-  // Rerank scores are cut off here. Vector fallback was already floored; keyword fallback has no scores.
-  const kept = candidates.filter((c) => c.rerank_score === null || c.rerank_score >= MIN_RERANK_SCORE);
+  const kept = applyCutoff(candidates);
 
   const { insertedId } = await db.collection("turns").insertOne({
     schema_version: SCHEMA_VERSION,
@@ -128,5 +136,9 @@ export async function recall(s: Session, query: string, conversation_id: string 
     added_on: isoDate(c.created_at),
     source: { role: c.source.role, name: author(c) },
   }));
-  return { turn_id: insertedId.toString(), memories };
+  const trace = () => traceTurn({
+    turnId: insertedId, question: query, conversationId: conversation_id, person_id: s.person_id, user_id: s.user_id,
+    startedAt, searchedAt, candidates, memories, degraded, minRerankScore: MIN_RERANK_SCORE,
+  });
+  return { turn_id: insertedId.toString(), memories, trace };
 }

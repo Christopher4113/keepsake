@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { getMemberSession } from "@/lib/auth";
 import { apiError } from "@/lib/http";
 import { recall } from "@/lib/recall";
@@ -15,5 +16,7 @@ export async function POST(req: Request) {
   if (!query) return apiError("bad_request", "query is required");
   const conversation_id = typeof body.conversation_id === "string" && body.conversation_id ? body.conversation_id.slice(0, 200) : null;
 
-  return Response.json(await recall(s, query, conversation_id));
+  const { trace, ...result } = await recall(s, query, conversation_id);
+  after(trace); // LangSmith, after the agent already has its answer
+  return Response.json(result);
 }
