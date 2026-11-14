@@ -1,6 +1,6 @@
 import { ObjectId } from "mongodb";
 import { after } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getMemberSession } from "@/lib/auth";
 import { traceAnswer } from "@/lib/tracing";
 import { getDb } from "@/lib/db";
 import { apiError } from "@/lib/http";
@@ -10,7 +10,7 @@ const ANSWER_SETTLE_MS = 4000;
 // The voice client posts what the agent said after a recall. It sends the whole answer so far, so retries are idempotent.
 // Contract: docs/api-reads.yaml.
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  const s = await getSession();
+  const s = await getMemberSession();
   if (!s) return apiError("unauthorized", "Sign in required");
   if (s.role !== "person") return apiError("forbidden", "Only the person can use the voice agent");
 

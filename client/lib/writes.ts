@@ -1,24 +1,20 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { ObjectId, type ClientSession, type Document } from "mongodb";
 import type { Session } from "./auth";
 import { getClient, getDb } from "./db";
 import type { ErrorCode } from "./http";
 import { SCHEMA_VERSION, actor, audit, type Scope } from "./memories";
 import { readableScopes } from "./recall";
-import { embed, rerank } from "./voyage";
+import { embed, withRetry, VoyageError } from "./voyage";
+import { classify as classifyCandidates } from "./classify";
+import { validate, revalidateFacts, ValidationError, type Fact } from "./validate";
 
 // The memory write path: add, correct, review (confirm/deny), forget, and the review queue.
 // HTTP contract: docs/api-writes.yaml. The /api/memories and /api/reviews routes and the dashboard
 // server actions both call these functions, so every surface gets the same rules.
 
 // Q1 is open (rerank cutoff vs an LLM), so the supersede decision lives behind classify() alone.
-// TODO(Track B, Emily): replace this placeholder with the real supersede method when merging the
-// classifier work. classify() is the only function that needs to change; callers rely on its return
-// shape. With 0.75, nothing is ever proposed: on keepsake_test the demo physio change scored 0.648
-// against "Physio visit is every Tuesday at 2pm", and the dinner change scored 0.569 against the old
-// dinner but also 0.548 against "Anna calls every evening around 7". Rerank alone can't separate
-// "replaces" from "same topic". Check against tests/scenarios/write_path.json.
-export const SUPERSEDE_MIN_SCORE = Number(process.env.SUPERSEDE_MIN_SCORE ?? 0.75);
-const CANDIDATE_LIMIT = 10;
+// The method itself is in classify.ts (cutoff, optional Gemini judge, and the score notes).
 
 // Thrown for a request the caller got wrong; routes turn it into { error: { code, message } }.
 export class WriteError extends Error {
@@ -27,7 +23,7 @@ export class WriteError extends Error {
 
 // R21: on a stale or missing confirm, the 409 body is a fresh needs-confirmation payload, not the error shape.
 export class ConfirmMismatch extends Error {
-  constructor(public payload: NeedsConfirmation) { super("Confirmation no longer matches"); }
+  constructor(public payload: NeedsConfirmation | BatchResult) { super("Confirmation no longer matches"); }
 }
 
 type Role = Session["role"];
@@ -38,12 +34,22 @@ export type NeedsConfirmation = { needs_confirmation: true; old: OldMemory };
 export type SavedWrite = {
   saved: true; needs_confirmation: false; needs_family_review: boolean;
   memory_id: string; status: string; scope: Scope; from: From;
+  // The stored text, after validate's rewrite ("tomorrow" becomes "on Sun Nov 15").
+  text: string; event_start: string | null; event_end: string | null;
   proposed_supersedes?: string | null; supersedes?: string | null; audit_action: "write" | "approve" | "verify";
   message?: string | null; candidates: Candidate[];
 };
 export type WriteResult = NeedsConfirmation | SavedWrite;
 
-export type MemoryInput = { text: string; scope?: string; confirm?: boolean; confirm_supersedes?: string };
+// Multi-fact notes (A17): one result per fact. saved is false when any fact needs confirmation.
+export type NotSaved = { saved: false; needs_confirmation: false };
+export type BatchFactResult = { text: string; event_start: string | null; event_end: string | null; result: SavedWrite | NeedsConfirmation | NotSaved };
+// facts_token is set when saved is false. The confirm resend must send it back with the same facts.
+export type BatchResult = { batch: true; saved: boolean; facts: BatchFactResult[]; facts_token?: string };
+
+// A confirm resend of a multi-fact note sends the split facts back, each with its own confirm_supersedes.
+export type FactInput = { text: string; event_start?: string | null; event_end?: string | null; confirm_supersedes?: string };
+export type MemoryInput = { text?: string; scope?: string; confirm?: boolean; confirm_supersedes?: string; facts?: FactInput[]; facts_token?: string };
 
 const memories = async () => (await getDb()).collection("memories");
 const iso = (d?: Date | null) => (d ? d.toISOString() : null);
@@ -62,11 +68,60 @@ function requireRole(s: Session, roles: Role[], message: string) {
   if (!roles.includes(s.role)) throw new WriteError("forbidden", message);
 }
 
-function cleanText(text: unknown) {
-  const t = typeof text === "string" ? text.trim().slice(0, 1000) : "";
-  if (!t) throw new WriteError("bad_request", "text is required");
-  return t;
+// Signs the split facts (text and dates) we returned in a saved:false batch, for this writer, person and scope.
+// A resend's facts must carry this token, so they are exactly what validate produced: the client
+// can't skip Gemini or change event_start/event_end. HMAC-SHA256 with AUTH_SECRET.
+function factsToken(s: Session, scope: Scope, facts: Fact[]): string {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) throw new Error("AUTH_SECRET is not set");
+  const body = JSON.stringify([s.user_id, s.person_id, scope, facts.map((f) => [f.text, iso(f.event_start), iso(f.event_end)])]);
+  return createHmac("sha256", secret).update(body).digest("base64url");
 }
+function tokenMatches(s: Session, scope: Scope, facts: Fact[], token: unknown): boolean {
+  if (typeof token !== "string") return false;
+  const want = Buffer.from(factsToken(s, scope, facts));
+  const got = Buffer.from(token);
+  return want.length === got.length && timingSafeEqual(want, got);
+}
+
+// Validate results for 10 minutes, per writer, person, Toronto day and text. When Voyage fails after
+// validate (503), the user's retry reuses the split instead of spending another Gemini call.
+// Per server process; cleared on restart.
+const VALIDATE_TTL_MS = 10 * 60_000;
+const validated = new Map<string, { at: number; facts: Fact[] }>();
+export const clearValidateCache = () => validated.clear(); // for tests
+async function validateOnce(s: Session, text: unknown): Promise<Fact[]> {
+  const day = new Date().toLocaleDateString("en-CA", { timeZone: "America/Toronto" });
+  const key = JSON.stringify([s.user_id, s.person_id, day, typeof text === "string" ? text.trim() : text]);
+  const hit = validated.get(key);
+  if (hit && Date.now() - hit.at < VALIDATE_TTL_MS) return hit.facts;
+  const { facts } = await validate(text, s);
+  for (const [k, v] of validated) if (Date.now() - v.at >= VALIDATE_TTL_MS) validated.delete(k);
+  if (validated.size >= 500) validated.delete(validated.keys().next().value!);
+  validated.set(key, { at: Date.now(), facts });
+  return facts;
+}
+
+// Validation layer (A17): every add runs validate (empty/length checks, then Gemini splits facts and
+// rewrites relative dates). The one exception is the confirm resend of a multi-fact note: it sends
+// back facts[] with the facts_token from our saved:false batch, and those facts are not re-split.
+async function factsOf(s: Session, input: MemoryInput, scope: Scope): Promise<Fact[]> {
+  try {
+    if (input.facts !== undefined) {
+      if (input.confirm !== true || input.text) throw new WriteError("bad_request", "facts is only accepted on a confirm resend (confirm: true, no text)");
+      const facts = revalidateFacts(input.facts);
+      if (!tokenMatches(s, scope, facts, input.facts_token)) throw new WriteError("bad_request", "facts don't match the ones we returned; add the note again");
+      return facts;
+    }
+    return await validateOnce(s, input.text);
+  } catch (e) {
+    if (e instanceof ValidationError) throw new WriteError(e.code, e.message);
+    throw e;
+  }
+}
+const dates = (f: Fact) => ({ event_start: iso(f.event_start), event_end: iso(f.event_end) });
+// Stored only when set; the validator types them as dates (migration 006).
+const dateFields = (f: Fact) => ({ ...(f.event_start && { event_start: f.event_start }), ...(f.event_end && { event_end: f.event_end }) });
 
 function parseId(id: unknown, what = "Memory") {
   if (typeof id !== "string" || !ObjectId.isValid(id)) throw new WriteError("not_found", `${what} not found`);
@@ -90,33 +145,18 @@ type Classified = {
   candidates: { doc: Document; supersedes: boolean; rerank_score: number | null }[];
 };
 
-// Finds verified memories this one might replace (R19, all scopes) and decides supersedes per candidate (A14).
-// The embedding is reused for the insert, so a memory is never stored without one when Voyage is up (R7).
-export async function classify(text: string, person_id: string): Promise<Classified> {
+// Finds verified memories this one might replace (R19, R24) and decides supersedes per candidate (A14),
+// via classify.ts. The embedding is reused for the insert. No embedding means no conflict check, so a
+// Voyage failure is a 503 and nothing is saved (R7, EDGE-CASES #29).
+export async function classify(text: string, person_id: string, s?: Session, event_start?: Date | null): Promise<Classified> {
   const names = await householdNames(person_id);
-  let embedding: number[];
   try {
-    [embedding] = await embed([text], "document");
+    const c = await classifyCandidates(text, person_id, s ?? { user_id: "", name: "", role: "family" }, { event_start });
+    const candidates = c.candidates.map((x) => ({ doc: x.doc, supersedes: x.supersedes, rerank_score: x.rerank_score }));
+    return { names, embedding: c.embedding, proposed: candidates.find((x) => x.supersedes)?.doc ?? null, candidates };
   } catch (e) {
-    // No vector, no comparison. Save anyway: setup-vectors.mjs backfills, and family still reviews caregiver notes.
-    console.warn("classify: embed failed, saving without candidates:", (e as Error).message);
-    return { names, embedding: [], proposed: null, candidates: [] };
-  }
-
-  const hits = await (await memories()).aggregate([
-    { $vectorSearch: { index: "memory_vec", path: "embedding", queryVector: embedding, numCandidates: 100, limit: CANDIDATE_LIMIT, filter: { person_id, status: "verified" } } },
-    { $project: { embedding: 0 } },
-  ]).toArray();
-  if (!hits.length) return { names, embedding, proposed: null, candidates: [] };
-
-  try {
-    const ranked = await rerank(text, hits.map((h) => h.text), CANDIDATE_LIMIT);
-    const candidates = ranked.map((r) => ({ doc: hits[r.index], supersedes: r.relevance_score >= SUPERSEDE_MIN_SCORE, rerank_score: r.relevance_score }));
-    return { names, embedding, proposed: candidates.find((c) => c.supersedes)?.doc ?? null, candidates };
-  } catch (e) {
-    // Without rerank there's no supersede signal: list candidates for family, propose nothing.
-    console.warn("classify: rerank failed, proposing nothing:", (e as Error).message);
-    return { names, embedding, proposed: null, candidates: hits.map((doc) => ({ doc, supersedes: false, rerank_score: null })) };
+    if (e instanceof VoyageError) throw new WriteError("unavailable", "The memory check is unavailable right now. Nothing was saved. Please try again.");
+    throw e;
   }
 }
 
@@ -143,83 +183,114 @@ const reviewOf = (c: Classified) => ({
   decided_by: null, decided_at: null,
 });
 
-// Inserts a verified memory that supersedes `old`, inside one transaction. Returns null if `old` stopped being verified.
+// Someone else superseded or forgot the old memory since the writer saw it: throwing aborts the transaction.
 class OldChanged extends Error {}
-async function saveSuperseding(s: Session, text: string, scope: Scope, embedding: number[], old: Document, review?: Document) {
-  try {
-    return await supersedeInTransaction(s, text, scope, embedding, old, review);
-  } catch (e) {
-    if (e instanceof OldChanged) return null;
-    throw e;
+
+type Kind = "pending" | "verified" | "supersede";
+type Plan = { fact: Fact; c: Classified; kind: Kind };
+
+// Saves one fact inside a transaction (insert, supersede if any, audit) and returns its SavedWrite.
+async function saveFact(s: Session, scope: Scope, p: Plan, session: ClientSession): Promise<SavedWrite> {
+  const coll = await memories();
+  const { fact, c, kind } = p;
+  const base = {
+    schema_version: SCHEMA_VERSION, person_id: s.person_id, text: fact.text, scope, source: actor(s),
+    embedding: c.embedding, created_at: new Date(), ...dateFields(fact),
+  };
+  const out = { saved: true as const, needs_confirmation: false as const, scope, from: from(s), text: fact.text, ...dates(fact) };
+
+  if (kind === "pending") {
+    // Caregiver: saved unverified for family review, whatever classify found (R15).
+    const { insertedId } = await coll.insertOne({ ...base, status: "unverified", flagged: true, supersedes: null, review: reviewOf(c) }, { session });
+    await audit(s, insertedId, "write", scope, null, null, session);
+    return { ...out, needs_family_review: true, memory_id: insertedId.toString(), status: "unverified", audit_action: "write", ...visibleClassification(s, c) };
   }
-}
-async function supersedeInTransaction(s: Session, text: string, scope: Scope, embedding: number[], old: Document, review?: Document) {
-  return inTransaction(async (session) => {
-    const coll = await memories();
-    const flipped = await coll.updateOne({ _id: old._id, person_id: s.person_id, status: "verified" }, { $set: { status: "superseded" } }, { session });
-    // Someone else superseded or forgot it since the writer saw it: throwing aborts the transaction.
-    if (!flipped.modifiedCount) throw new OldChanged();
-    const { insertedId } = await coll.insertOne({
-      schema_version: SCHEMA_VERSION, person_id: s.person_id, text, scope, status: "verified", flagged: false,
-      source: actor(s), supersedes: old._id, embedding, created_at: new Date(),
-      ...(review && { review }),
-    }, { session });
-    await audit(s, insertedId, "approve", scope, old._id, insertedId, session);
-    return insertedId;
-  });
+  if (kind === "verified") {
+    // Family, nothing to supersede: trusted, saved verified. A stale confirm has nothing left to confirm.
+    const { insertedId } = await coll.insertOne({ ...base, status: "verified", flagged: false, supersedes: null }, { session });
+    await audit(s, insertedId, "write", scope, null, null, session);
+    return { ...out, needs_family_review: false, memory_id: insertedId.toString(), status: "verified", audit_action: "write", ...visibleClassification(s, c) };
+  }
+  // Family confirmed a supersede (A6): flip the old one only if it's still verified (R21).
+  const old = c.proposed!;
+  const flipped = await coll.updateOne({ _id: old._id, person_id: s.person_id, status: "verified" }, { $set: { status: "superseded" } }, { session });
+  if (!flipped.modifiedCount) throw new OldChanged();
+  const review = { ...reviewOf(c), state: "approved", decided_by: s.user_id, decided_at: new Date() };
+  const { insertedId } = await coll.insertOne({ ...base, status: "verified", flagged: false, supersedes: old._id, review }, { session });
+  await audit(s, insertedId, "approve", scope, old._id, insertedId, session);
+  return {
+    ...out, needs_family_review: false, memory_id: insertedId.toString(), status: "verified", audit_action: "approve",
+    supersedes: old._id.toString(), ...visibleClassification(s, c),
+  };
 }
 
 // POST /api/memories. Family and caregiver; Margaret doesn't add memories in the MVP (A16).
-export async function createMemory(s: Session, input: MemoryInput): Promise<WriteResult> {
+// The note runs through validate first; each resulting fact is classified on its own (A17).
+export async function createMemory(s: Session, input: MemoryInput): Promise<WriteResult | BatchResult> {
   requireRole(s, ["family", "caregiver"], "Only family and caregivers can add memories");
-  const text = cleanText(input.text);
   // R20: caregivers always write caregiver scope; family picks (default family).
   const scope = (isFamily(s) ? input.scope ?? "family" : "caregiver") as Scope;
   if (!readableScopes(s.role).includes(scope)) throw new WriteError("bad_request", "scope must be family or caregiver");
 
-  const c = await classify(text, s.person_id);
-  const coll = await memories();
+  const facts = await factsOf(s, input, scope);
+  return addFacts(s, scope, facts, input);
+}
 
-  // Caregiver: saved unverified for family review, whatever classify found (R15).
-  if (!isFamily(s)) {
-    const { insertedId } = await coll.insertOne({
-      schema_version: SCHEMA_VERSION, person_id: s.person_id, text, scope, status: "unverified", flagged: true,
-      source: actor(s), supersedes: null, embedding: c.embedding, created_at: new Date(), review: reviewOf(c),
-    });
-    await audit(s, insertedId, "write", scope);
-    return {
-      saved: true, needs_confirmation: false, needs_family_review: true,
-      memory_id: insertedId.toString(), status: "unverified", scope, from: from(s), audit_action: "write",
-      ...visibleClassification(s, c),
-    };
+// Plans and saves already-validated facts. Split out so the OldChanged retry doesn't validate again.
+async function addFacts(s: Session, scope: Scope, facts: Fact[], input: MemoryInput): Promise<WriteResult | BatchResult> {
+  const single = facts.length === 1;
+  const confirmIds = input.facts ? input.facts.map((f) => f.confirm_supersedes) : single ? [input.confirm_supersedes] : facts.map(() => undefined);
+
+  // Decide each fact before saving anything.
+  const plans: Plan[] = [];
+  const asks: (NeedsConfirmation | null)[] = [];
+  let mismatch = false;
+  for (let i = 0; i < facts.length; i++) {
+    const c = await classify(facts[i].text, s.person_id, s, facts[i].event_start);
+    let kind: Kind = isFamily(s) ? (c.proposed ? "supersede" : "verified") : "pending";
+    let ask: NeedsConfirmation | null = null;
+    if (kind === "supersede") {
+      ask = { needs_confirmation: true, old: oldOf(c.proposed!, c.names) };
+      if (input.confirm === true && confirmIds[i] === c.proposed!._id.toString()) ask = null;
+      else if (input.confirm === true && (confirmIds[i] || single)) mismatch = true; // R21: confirmed a different (or no) memory
+    }
+    if (ask) kind = "supersede";
+    plans.push({ fact: facts[i], c, kind });
+    asks.push(ask);
   }
 
-  // Family, would supersede: ask first (A6), then save only if the same memory is still proposed (R21).
-  if (c.proposed) {
-    const ask: NeedsConfirmation = { needs_confirmation: true, old: oldOf(c.proposed, c.names) };
-    if (input.confirm !== true) return ask;
-    if (input.confirm_supersedes !== c.proposed._id.toString()) throw new ConfirmMismatch(ask);
-    const review = { ...reviewOf(c), state: "approved", decided_by: s.user_id, decided_at: new Date() };
-    const id = await saveSuperseding(s, text, scope, c.embedding, c.proposed, review);
-    if (!id) throw new ConfirmMismatch(ask);
-    return {
-      saved: true, needs_confirmation: false, needs_family_review: false,
-      memory_id: id.toString(), status: "verified", scope, from: from(s), audit_action: "approve",
-      supersedes: c.proposed._id.toString(), ...visibleClassification(s, c),
-    };
-  }
-
-  // Family, nothing to supersede: trusted, saved verified. A stale confirm has nothing left to confirm.
-  const { insertedId } = await coll.insertOne({
-    schema_version: SCHEMA_VERSION, person_id: s.person_id, text, scope, status: "verified", flagged: false,
-    source: actor(s), supersedes: null, embedding: c.embedding, created_at: new Date(),
+  const batchOf = (results: (SavedWrite | NeedsConfirmation | NotSaved)[], saved: boolean): BatchResult => ({
+    batch: true, saved, facts: plans.map((p, i) => ({ text: p.fact.text, ...dates(p.fact), result: results[i] })),
+    ...(!saved && { facts_token: factsToken(s, scope, facts) }),
   });
-  await audit(s, insertedId, "write", scope);
-  return {
-    saved: true, needs_confirmation: false, needs_family_review: false,
-    memory_id: insertedId.toString(), status: "verified", scope, from: from(s), audit_action: "write",
-    ...visibleClassification(s, c),
-  };
+
+  if (asks.some(Boolean)) {
+    // Save nothing; every conflicting fact gets its own "Are you sure?" (A6, A17).
+    if (single) {
+      if (mismatch) throw new ConfirmMismatch(asks[0]!);
+      return asks[0]!;
+    }
+    const body = batchOf(asks.map((a) => a ?? { saved: false, needs_confirmation: false }), false);
+    if (mismatch) throw new ConfirmMismatch(body);
+    return body;
+  }
+
+  try {
+    const results = await inTransaction(async (session) => {
+      const out: SavedWrite[] = [];
+      for (const p of plans) out.push(await saveFact(s, scope, p, session));
+      return out;
+    });
+    return single ? results[0] : batchOf(results, true);
+  } catch (e) {
+    if (!(e instanceof OldChanged)) throw e;
+    // The old memory changed between classify and the save. Classify again: a new proposal is a fresh
+    // 409 needs-confirmation (R21); with nothing left to supersede, it's a plain conflict.
+    const again = await addFacts(s, scope, facts, { ...input, confirm: false });
+    if ("needs_confirmation" in again && again.needs_confirmation) throw new ConfirmMismatch(again);
+    if ("batch" in again && !again.saved) throw new ConfirmMismatch(again);
+    throw new WriteError("conflict", "The old memory was already replaced. Please review and try again.");
+  }
 }
 
 // POST /api/memories/:id/corrections. Family replaces a verified memory with new text (A2).
@@ -228,28 +299,33 @@ export async function createMemory(s: Session, input: MemoryInput): Promise<Writ
 export async function correctMemory(s: Session, id: string, input: MemoryInput): Promise<WriteResult> {
   requireRole(s, ["family"], "Only family can correct a memory; caregivers add a note for review instead");
   const _id = parseId(id);
-  const text = cleanText(input.text);
   const coll = await memories();
   const old = await coll.findOne({ _id, person_id: s.person_id, scope: { $in: readableScopes(s.role) }, status: "verified" }, { projection: { embedding: 0 } });
   if (!old) throw new WriteError("not_found", "Memory not found");
+
+  const facts = await factsOf(s, { text: input.text }, old.scope as Scope);
+  if (facts.length !== 1) throw new WriteError("bad_request", "A correction must be one fact. Add the other facts separately.");
+  const fact = facts[0];
 
   const ask: NeedsConfirmation = { needs_confirmation: true, old: oldOf(old, await householdNames(s.person_id)) };
   if (input.confirm !== true) return ask;
   if (input.confirm_supersedes !== id) throw new ConfirmMismatch(ask);
 
-  let embedding: number[] = [];
+  let embedding: number[];
   try {
-    [embedding] = await embed([text], "document");
-  } catch (e) {
-    console.warn("correct: embed failed, saving without embedding:", (e as Error).message);
+    [embedding] = await withRetry(() => embed([fact.text], "document", 5000), "embed");
+  } catch {
+    // Never store an empty embedding (R7, EDGE-CASES #29).
+    throw new WriteError("unavailable", "The memory check is unavailable right now. Nothing was saved. Please try again.");
   }
-  const newId = await saveSuperseding(s, text, old.scope, embedding, old);
-  if (!newId) throw new ConfirmMismatch(ask);
-  return {
-    saved: true, needs_confirmation: false, needs_family_review: false,
-    memory_id: newId.toString(), status: "verified", scope: old.scope, from: from(s), audit_action: "approve",
-    proposed_supersedes: id, supersedes: id, candidates: [],
-  };
+  const plan: Plan = { fact, c: { names: new Map(), embedding, proposed: old, candidates: [] }, kind: "supersede" };
+  try {
+    const saved = await inTransaction((session) => saveFact(s, old.scope as Scope, plan, session));
+    return { ...saved, proposed_supersedes: id, candidates: [] };
+  } catch (e) {
+    if (e instanceof OldChanged) throw new ConfirmMismatch(ask);
+    throw e;
+  }
 }
 
 export type ReviewDecision = {

@@ -1,11 +1,11 @@
-import { getSession } from "@/lib/auth";
+import { getMemberSession } from "@/lib/auth";
 import { apiError } from "@/lib/http";
 import { longDate } from "@/lib/time";
 
 // Hands the browser a short-lived signed URL so the ElevenLabs key never leaves the server.
 // today is computed here, in the household's timezone, and goes to the agent as a dynamic variable.
 export async function GET() {
-  const s = await getSession();
+  const s = await getMemberSession();
   if (!s) return apiError("unauthorized", "Sign in required");
   if (s.role !== "person") return apiError("forbidden", "Only the person can use the voice agent");
 

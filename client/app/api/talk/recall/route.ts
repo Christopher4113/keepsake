@@ -1,12 +1,12 @@
 import { after } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getMemberSession } from "@/lib/auth";
 import { apiError } from "@/lib/http";
 import { recall } from "@/lib/recall";
 
 // Client tool "recall": verified memories the agent may state, already filtered to this person's scopes.
 // Contract: docs/api-reads.yaml. Post the spoken answer to /api/turns/:turn_id/answer.
 export async function POST(req: Request) {
-  const s = await getSession();
+  const s = await getMemberSession();
   if (!s) return apiError("unauthorized", "Sign in required");
   if (s.role !== "person") return apiError("forbidden", "Only the person can use the voice agent");
 
