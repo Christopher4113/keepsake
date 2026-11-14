@@ -1,13 +1,12 @@
 import Link from "next/link";
 import type { WithId, Document, ObjectId } from "mongodb";
 import { Check, Clock, Eraser, History, Link2, PencilLine, Plus, Replace, X } from "lucide-react";
-import { getMemberSession, requireAuth } from "@/lib/auth";
-import { redirect } from "next/navigation";
+import { requireSession } from "@/lib/auth";
 import { loadGuidance } from "@/lib/guidance";
 import { GuidanceForm } from "./guidance-form";
 import { getDb } from "@/lib/db";
 import { SCOPES, visibleTo } from "@/lib/memories";
-import { userService } from "@/lib/userService";
+import { careTeam } from "@/lib/users";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/logo";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -34,10 +33,9 @@ const fmt = (d?: Date | null) => d?.toLocaleString("en-CA", { dateStyle: "medium
 const panel = "rounded-2xl border-border/70 shadow-[0_20px_50px_-35px_rgba(80,40,50,0.35)]";
 
 export default async function DashboardPage() {
-  const { token } = await requireAuth(["family", "caregiver"]);
-  const me = await getMemberSession();
-  if (!me || !["family", "caregiver"].includes(me.role)) redirect("/login");
-  const team = await userService.careTeam(token);
+  // requireSession re-reads role and household from households.members on every request.
+  const me = await requireSession(["family", "caregiver"]);
+  const team = await careTeam(me);
   const person = team.find((p) => p.role === "person");
   // Caregivers only add notes; the review dashboard below is family-only.
   if (me.role === "caregiver") return <CaregiverView me={me} personName={person?.name} />;

@@ -63,7 +63,7 @@ classify(text, person_id): embed as a document, then `$vectorSearch` candidates 
 - Prompt: `client/lib/prompt.ts`. Today's date (`{{today}}`, America/Toronto, from `/api/talk/session`; D-A5); answer only from recall results; read "today" in a memory against its `added_on`; attribute facts with `source.name`; with no results, say you're not sure and suggest asking family; no medical advice. Family-editable topic guidance is stored in `topic_guidance`, loaded separately on each voice recall, and snapshotted on turns. It controls tone and redirection, never establishes personal facts or overrides safety. Family edits use `saveGuidance` in `lib/writes.ts`; caregivers have no guidance access. See migration 007 and `docs/testing-sensitive-conversations.md`.
 
 ## Household members
-Only the family admin adds or removes members (backend `POST /users`, requireFamilyAdmin). That is the admin's only extra power.
+Only the family admin adds or removes members (not built yet: the old `backend/` `POST /users` was removed when the user service moved into Next.js). That is the admin's only extra power.
 
 ## Out of scope (NEXT_STEPS)
 Leakage test, `kind` field, caregiver trace access, per-household timezone, turns retention, live push notifications (change streams), an LLM classifier if Q1 lands on rerank-only, related/unrelated labels, time-series turns.
