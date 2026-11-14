@@ -18,7 +18,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { LogoutButton } from "../logout-button";
 import { CaregiverView } from "./caregiver";
 import { ConfirmButton } from "./confirm-button";
-import { addMemory, correctMemory, denyMemory, forgetMemory, saveGuidance, verifyMemory } from "./actions";
+import { denyMemory, forgetMemory, saveGuidance, verifyMemory } from "./actions";
+import { AddMemoryForm, CorrectForm } from "./memory-forms";
+import { readableScopes } from "@/lib/recall";
 
 const VERBS: Record<string, string> = {
   write: "added", verify: "verified", approve: "approved", deny: "denied",
@@ -30,7 +32,6 @@ const SCOPE_STYLE: Record<string, string> = {
   private: "bg-muted text-muted-foreground",
 };
 const fmt = (d?: Date | null) => d?.toLocaleString("en-CA", { dateStyle: "medium", timeStyle: "short" });
-const select = "h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
 const panel = "rounded-2xl border-border/70 shadow-[0_20px_50px_-35px_rgba(80,40,50,0.35)]";
 
 export default async function DashboardPage() {
@@ -104,11 +105,7 @@ export default async function DashboardPage() {
             <summary className="inline-flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-full px-3 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
               <PencilLine className="size-4" aria-hidden /> Correct
             </summary>
-            <form action={correctMemory} className="mt-2 flex w-full flex-wrap gap-2 sm:w-[28rem]">
-              <input type="hidden" name="id" value={id} />
-              <Input name="text" defaultValue={m.text} required aria-label="Corrected text" className="min-w-0 flex-1" />
-              <Button size="sm" className="h-9 rounded-full">Save</Button>
-            </form>
+            <CorrectForm id={id} text={m.text} />
           </details>
           <form action={forgetMemory}>
             <input type="hidden" name="id" value={id} />
@@ -204,25 +201,7 @@ export default async function DashboardPage() {
                 <CardTitle className="flex items-center gap-2 font-serif text-xl font-normal"><Plus className="size-4 text-primary" aria-hidden /> Add a memory</CardTitle>
               </CardHeader>
               <CardContent>
-                <form action={addMemory} className="space-y-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="new-text">What should {person?.name} remember?</Label>
-                    <Textarea id="new-text" name="text" required rows={3} placeholder="Anna is bringing dinner at 6 tonight" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="grid gap-2">
-                      <Label htmlFor="new-scope">Who can see it</Label>
-                      <select id="new-scope" name="scope" className={select}>
-                        {SCOPES[me.role].map((s) => <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>)}
-                      </select>
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="new-exp">Expires</Label>
-                      <Input id="new-exp" name="expires_at" type="datetime-local" className="px-2 text-xs" />
-                    </div>
-                  </div>
-                  <Button className="w-full rounded-full">Add memory</Button>
-                </form>
+                <AddMemoryForm personName={person?.name} scopes={readableScopes(me.role)} />
               </CardContent>
             </Card>
 

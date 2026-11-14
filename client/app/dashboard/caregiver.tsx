@@ -5,13 +5,9 @@ import { visibleTo } from "@/lib/memories";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/logo";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { LogoutButton } from "../logout-button";
-import { addMemory } from "./actions";
+import { AddMemoryForm } from "./memory-forms";
 
 const STATUS: Record<string, { label: string; style: string }> = {
   unverified: { label: "Waiting for family", style: "bg-secondary text-primary" },
@@ -52,19 +48,7 @@ export async function CaregiverView({ me, personName }: { me: Session; personNam
             <CardTitle className="flex items-center gap-2 font-serif text-xl font-normal"><NotebookPen className="size-4 text-primary" aria-hidden /> Add a note</CardTitle>
           </CardHeader>
           <CardContent>
-            <form action={addMemory} className="space-y-4">
-              <div className="grid gap-2">
-                <Label htmlFor="note-text">What should {personName} know?</Label>
-                <Textarea id="note-text" name="text" required rows={3} placeholder="Reading glasses are on the bedside table now" />
-              </div>
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div className="grid gap-2">
-                  <Label htmlFor="note-exp">Expires (optional)</Label>
-                  <Input id="note-exp" name="expires_at" type="datetime-local" className="w-auto" />
-                </div>
-                <Button className="rounded-full px-6">Add note</Button>
-              </div>
-            </form>
+            <AddMemoryForm personName={personName} scopes={["caregiver"]} caregiver />
           </CardContent>
         </Card>
 

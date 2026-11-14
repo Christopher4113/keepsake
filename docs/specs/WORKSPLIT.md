@@ -20,7 +20,7 @@ Interface to the ElevenLabs teammate: recall tool request {query}, response {tur
 ## Track B: write path + review (demo steps 3-4)
 Files: client/lib/classify.ts, client/app/dashboard/actions.ts, the dashboard review UI, client/app/api/talk/remember/route.ts.
 1. classify(newText, person_id, writerSession): embed as document, $vectorSearch candidates (all scopes, for the admin view), rerank-2.5, decide supersedes true/false per candidate (A14; method per the A1 research; start with a rerank cutoff placeholder behind this one function), return {proposed_supersedes, candidates[{memory_id, supersedes, rerank_score}]}.
-2. addMemory by a caregiver, and remember (Margaret): run classify, save unverified + review pending. The writer's response shows only candidates in their readable scopes (A3).
+2. Add (`POST /api/memories`) by a caregiver: run classify, save unverified + review pending. The writer's response shows only candidates in their readable scopes (A3).
 3. Family write that supersedes (family can verify, so they confirm their own): return needs_confirmation {old memory text, author, date}; on confirm=true approve immediately (A6).
 4. Review queue: pending reviews with the old memory looked up (text, author, date) -> "This will supersede <old>". Confirm/deny by any family member (canVerify; caregivers get 403), in one transaction (withTransaction). Confirm: new verified, old superseded, audit approve. Deny: new retracted, audit deny.
 5. correct (A2): a family member creates a new re-embedded memory superseding the old, in one transaction (the A6-style confirm when it supersedes). A caregiver correction goes through the normal unverified + review path.
