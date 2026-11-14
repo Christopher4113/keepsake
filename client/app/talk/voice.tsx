@@ -26,6 +26,9 @@ const clientTools = {
   },
 };
 
+// ElevenLabs v3 delivery tags like "[calm]" or "[laughs]" shape the voice; they aren't words to show or keep.
+const stripAudioTags =(s: string) => s.replace(/\[[a-z][a-z ]{0,29}\]\s*/gi, "").replace(/\s{2,}/g, " ").trim();
+
 // Everything the agent says after a recall, until the next recall, is that turn's answer.
 // Parts are keyed by response id, so streamed resends replace rather than repeat; the whole answer is sent each time.
 function saveAnswer(message: string, key: string) {
@@ -43,8 +46,10 @@ function Talk() {
     onDisconnect: () => { convo.conversationId = null; convo.turnId = null; convo.parts.clear(); },
     onMessage: ({ message, source, response_id, event_id }) => {
       if (source !== "ai") return;
-      setCaption(message);
-      saveAnswer(message, response_id ?? String(event_id));
+      const text = stripAudioTags(message);
+      if (!text) return;
+      setCaption(text);
+      saveAnswer(text, response_id ?? String(event_id));
     },
     onError: (message) => setError(String(message)),
   });
