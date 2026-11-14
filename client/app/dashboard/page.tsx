@@ -4,6 +4,7 @@ import { getDb } from "@/lib/db";
 import { SCOPES, visibleTo } from "@/lib/memories";
 import { userService } from "@/lib/userService";
 import { LogoutButton } from "../logout-button";
+import { CaregiverView } from "./caregiver";
 import { ConfirmButton } from "./confirm-button";
 import { addMemory, correctMemory, denyMemory, forgetMemory, saveGuidance, verifyMemory } from "./actions";
 
@@ -17,18 +18,20 @@ const input = "rounded border px-2 py-1";
 
 export default async function DashboardPage() {
   const { session: me, token } = await requireAuth(["family", "caregiver"]);
+  const team = await userService.careTeam(token);
+  const person = team.find((p) => p.role === "person");
+  if (me.role === "caregiver") return <CaregiverView me={me} personName={person?.name} />;
+
   const db = await getDb();
   const live = { ...visibleTo(me), status: { $in: ["unverified", "verified"] } };
 
-  const [team, memories, guidance, activity] = await Promise.all([
-    userService.careTeam(token),
+  const [memories, guidance, activity] = await Promise.all([
     db.collection("memories").find(live, { projection: { embedding: 0 } }).sort({ created_at: -1 }).toArray(),
     db.collection("topic_guidance").find({ person_id: me.person_id }).sort({ topic: 1 }).toArray(),
     db.collection("audit_log").find({ person_id: me.person_id, scope: { $in: SCOPES[me.role] } }).sort({ at: -1 }).limit(20).toArray(),
   ]);
 
   const names = Object.fromEntries(team.map((p) => [p.user_id, p.name]));
-  const person = team.find((p) => p.role === "person");
   const review = memories.filter((m) => m.status === "unverified" || m.flagged);
   const verified = memories.filter((m) => !review.includes(m));
 
@@ -129,23 +132,19 @@ export default async function DashboardPage() {
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">Conversation guidance</h2>
         <p className="text-sm text-zinc-500">How the voice agent should handle sensitive topics.</p>
-        {guidance.map((g) => me.role === "family" ? (
+        {guidance.map((g) => (
           <form key={g.topic} action={saveGuidance} className="flex flex-col gap-1">
             <input type="hidden" name="topic" value={g.topic} />
             <label className="text-sm font-medium capitalize" htmlFor={`g-${g.topic}`}>{g.topic}</label>
             <textarea id={`g-${g.topic}`} name="guidance" defaultValue={g.guidance} rows={2} className={input} />
             <button className={`${btn} self-start`}>Save</button>
           </form>
-        ) : (
-          <div key={g.topic}><p className="text-sm font-medium capitalize">{g.topic}</p><p>{g.guidance}</p></div>
         ))}
-        {me.role === "family" && (
-          <form action={saveGuidance} className="flex flex-wrap items-end gap-2">
-            <label className="flex flex-col gap-1 text-sm">New topic<input name="topic" required className={input} /></label>
-            <label className="flex flex-1 flex-col gap-1 text-sm">Guidance<input name="guidance" required className={input} /></label>
-            <button className={btn}>Add topic</button>
-          </form>
-        )}
+        <form action={saveGuidance} className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1 text-sm">New topic<input name="topic" required className={input} /></label>
+          <label className="flex flex-1 flex-col gap-1 text-sm">Guidance<input name="guidance" required className={input} /></label>
+          <button className={btn}>Add topic</button>
+        </form>
       </section>
 
       <section className="flex flex-col gap-3">
