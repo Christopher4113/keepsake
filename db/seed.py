@@ -12,6 +12,7 @@ Memory states in this seed:
 """
 import os
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import voyageai
 from dotenv import load_dotenv
@@ -28,6 +29,9 @@ vo = voyageai.Client()  # reads VOYAGE_API_KEY
 now = datetime.now(timezone.utc)
 ago = lambda **kw: now - timedelta(**kw)
 day = lambda d: d.astimezone().strftime("%A %b %-d")  # e.g. "Saturday Nov 14", local zone
+# Midnight of that day in the household's zone, as validate.ts sets event_start for "on <day>" with no time.
+# The caregiver briefing groups on this (Today / Coming up).
+midnight = lambda d: d.astimezone(ZoneInfo("America/Toronto")).replace(hour=0, minute=0, second=0, microsecond=0)
 
 anna = {"role": "family", "user_id": "anna", "name": "Anna"}
 ravi = {"role": "caregiver", "user_id": "ravi", "name": "Ravi"}
@@ -64,9 +68,12 @@ memories = [
     {"key": "ravi_holidays", "text": "Ravi does not come on statutory holidays", "scope": "caregiver", "status": V, "source": anna},
 
     # ---------- verified: events (no expiry; the date is in the text) ----------
-    {"key": "anna_dinner", "text": f"Anna is bringing dinner on {day(now)} at 6pm", "scope": "family", "status": V, "source": anna},
-    {"key": "joan_books", "text": f"Neighbour Joan is dropping off library books on the morning of {day(now)}", "scope": "caregiver", "status": V, "source": anna},
-    {"key": "leo_birthday", "text": f"Grandson Leo's birthday party is on {day(now + timedelta(days=7))}", "scope": "family", "status": V, "source": anna},
+    {"key": "anna_dinner", "text": f"Anna is bringing dinner on {day(now)} at 6pm", "scope": "family", "status": V, "source": anna,
+     "event_start": midnight(now).replace(hour=18)},
+    {"key": "joan_books", "text": f"Neighbour Joan is dropping off library books on the morning of {day(now)}", "scope": "caregiver", "status": V, "source": anna,
+     "event_start": midnight(now)},
+    {"key": "leo_birthday", "text": f"Grandson Leo's birthday party is on {day(now + timedelta(days=7))}", "scope": "family", "status": V, "source": anna,
+     "event_start": midnight(now + timedelta(days=7))},
 
     # ---------- verified: facts ----------
     {"key": "husband", "text": "Margaret's husband George passed away in 2022", "scope": "family", "status": V, "source": anna},

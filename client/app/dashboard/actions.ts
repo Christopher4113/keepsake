@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireSession } from "@/lib/auth";
+import { getMemberSession, requireSession } from "@/lib/auth";
+import { ask } from "@/lib/ask";
+import type { RecalledMemory } from "@/lib/recall";
 import {
   ConfirmMismatch, WriteError, correctMemory as correct, createMemory, forgetMemory as forget, reviewMemory,
   type BatchResult, type FactInput, type OldMemory, type WriteResult,
@@ -94,4 +96,25 @@ export async function forgetMemory(form: FormData) {
   const s = await requireSession(["family"]);
   await forget(s, str(form, "id"));
   revalidatePath("/dashboard");
+}
+
+// The caregiver "Ask about <person>" box. Role is re-read from households (getMemberSession), and recall()
+// limits the search to that role's scopes, the same as POST /api/recall.
+export type AskState =
+  | { kind: "idle" }
+  | { kind: "answer"; question: string; answer: string | null; memories: RecalledMemory[] }
+  | { kind: "error"; message: string };
+
+export async function askAboutPerson(_prev: AskState, form: FormData): Promise<AskState> {
+  const s = await getMemberSession();
+  if (!s) return { kind: "error", message: "Please sign in again." };
+  const question = str(form, "question").slice(0, 500);
+  if (!question) return { kind: "error", message: "Type a question first." };
+  try {
+    const r = await ask(s, question, str(form, "person_name") || undefined);
+    return { kind: "answer", question, answer: r.answer, memories: r.memories };
+  } catch (e) {
+    console.error("ask failed", e);
+    return { kind: "error", message: "Something went wrong. Please try again." };
+  }
 }
