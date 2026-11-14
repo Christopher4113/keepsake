@@ -226,11 +226,6 @@ export default function Landing() {
                   <span className="inline-flex h-9 items-center rounded-full border px-4 text-sm">Deny</span>
                   <span className="inline-flex h-9 items-center rounded-full border px-4 text-sm">Correct</span>
                 </div>
-                <Separator />
-                <div className="space-y-1">
-                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Guidance · Husband</p>
-                  <p className="text-sm">&ldquo;Don&apos;t correct her bluntly. Acknowledge the feeling, then offer the Lisbon photo album.&rdquo;</p>
-                </div>
               </CardContent>
             </Card>
           </div>
