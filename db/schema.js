@@ -39,6 +39,7 @@ db.memories.createIndex({ person_id: 1, status: 1, flagged: 1 });
 
 db.createCollection("people");
 db.people.createIndex({ user_id: 1 }, { unique: true });
+db.people.createIndex({ email: 1 }, { unique: true });
 
 db.createCollection("topic_guidance");
 db.topic_guidance.createIndex({ person_id: 1, topic: 1 }, { unique: true });

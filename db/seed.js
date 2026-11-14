@@ -13,6 +13,8 @@ const sam  = { role: "family", user_id: "sam" };
 
 ["memories", "people", "topic_guidance", "audit_log", "replay_runs"].forEach(c => db[c].deleteMany({}));
 
+// Every demo login uses password "keepsake" (bcrypt hash below). Email is <user_id>@keepsake.test.
+const password_hash = "$2b$10$OwUnGqFauqbAzW8RROu5M.1cVcMbd1ZrVxJvdXg13n74VvWsoys9m";
 db.people.insertMany([
   { user_id: "margaret", name: "Margaret", role: "person",    person_id: "margaret" },
   { user_id: "anna",     name: "Anna",     role: "family",    person_id: "margaret", relation: "daughter", admin: true },
@@ -20,7 +22,7 @@ db.people.insertMany([
   // second household for the leakage test
   { user_id: "harold",   name: "Harold",   role: "person",    person_id: "harold" },
   { user_id: "sam",      name: "Sam",      role: "family",    person_id: "harold", admin: true }
-]);
+].map(p => ({ ...p, email: `${p.user_id}@keepsake.test`, password_hash })));
 
 const base = (m) => ({ supersedes: null, flagged: false, expires_at: null, embedding: [], created_at: now, ...m });
 
