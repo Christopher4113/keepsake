@@ -11,7 +11,7 @@ Roles come from `households.members` on every request. The JWT is trusted for us
 | Add a memory | no (MVP, A16) | yes, saved unverified | yes | yes |
 | Verify / deny / confirm a supersede | no | **no** | yes | yes |
 | Correct a memory | no | goes to review | yes | yes |
-| View the trace | no | own scopes | yes | yes |
+| View the trace | no | no (MVP, D-A2) | yes | yes |
 | Manage household members | no | no | no | **yes** |
 
 - The system decides, for each existing candidate memory, whether the new memory supersedes it (yes or no; A14). People only confirm or deny (D1, D2).
@@ -20,21 +20,25 @@ Roles come from `households.members` on every request. The JWT is trusted for us
 ## Memory document
 main's schema plus `review`:
 `{schema_version:1, person_id, text, scope, status, source:{user_id, name, role}, supersedes, flagged, embedding[1024], created_at, review?:{state: pending|approved|denied, proposed_supersedes, candidates[{memory_id, supersedes: bool, rerank_score}], decided_by, decided_at}}`
-- status: unverified | verified | superseded | retracted. Scope: family | caregiver. Recall reads verified and unverified. There is no private scope (A17).
+- status: unverified | verified | superseded | retracted. Scope: family | caregiver. Recall reads verified only (D-A1). There is no private scope (A17).
 - No `kind` field. No `expires_at`. Time-bound facts keep their dates in the text ("Anna is visiting Nov 12-16"). Optional `event_start`/`event_end` are allowed, but recall never filters on them.
 - Embeddings: voyage-3.5, 1024 dims, cosine; input_type `document` on write and `query` on recall.
 
 ## Recall (demo steps 1-2)
-1. `$vectorSearch` on `memory_vec`, pre-filtered by person_id, readable scopes and status in [verified, unverified]; numCandidates 100, limit 20.
-2. rerank-2.5 over the hits with the question as the query; keep the top 5.
-3. Drop results below `MIN_RERANK_SCORE` (config; calibrate on the seed data so out-of-knowledge questions return nothing). If none are left, return an empty list.
-4. The regex fallback runs only while the vector index is building.
-5. Write a `turns` doc and return `{turn_id, memories:[{text, status}]}`.
+Code: `client/lib/recall.ts`. HTTP contract: `docs/api-reads.yaml`.
+1. Embed the question (`input_type` query). If the embed fails, return an empty list (`degraded: embed_error`).
+2. `$vectorSearch` on `memory_vec`, pre-filtered by person_id, readable scopes (family and caregiver, A17) and `status: verified`; numCandidates 100, limit 20. Unverified memories never reach the agent until family verifies them (D-A1).
+3. rerank-2.5 over the hits with the question as the query; keep the top 5.
+4. Drop results below `MIN_RERANK_SCORE` (0.5; env override; calibrated with `client/scripts/calibrate-recall.mts`: in-knowledge 0.646-0.882, out-of-knowledge 0.256-0.371). If none are left, return an empty list.
+5. If rerank fails (timeout, 429, 5xx, any error), fall back to vector order with a `MIN_VECTOR_SCORE` floor (0.7; `degraded: rerank_timeout | rerank_error`). Timeouts: 3s embed, 2s rerank, no retries (D-A6).
+6. The keyword fallback runs only when `$vectorSearch` throws (index building or missing; `degraded: regex`).
+7. Write a `turns` doc, including empty ones (D-A7), and return `{turn_id, memories:[{text, status, added_on, source:{role, name}}]}` (D-A4).
 
 ## Turns and trace
-`turns: {schema_version:1, person_id, user_id, conversation_id, at, question, results[{memory_id, text, status, scope, author_name, author_role, created_at, vector_score, rerank_score}], answer}`. Index `{person_id:1, at:-1}`.
-- `POST /api/turns/:id/answer {answer}`: the voice client posts the agent's spoken answer.
-- `GET /api/turns` (newest first) and `GET /api/turns/:id`. The trace screen shows the question, the answer, and for each memory who added it, when, its status and its scores.
+`turns: {schema_version:1, person_id, user_id, conversation_id, at, question, results[{memory_id, text, status, scope, author_name, author_role, created_at, vector_score, rerank_score}], top_rerank_score, min_rerank_score, degraded, answer}`. Index `{person_id:1, at:-1}`. Created by `db/migrations/005_turns.js`.
+- results is a snapshot at question time. `top_rerank_score` is the best score even if the cutoff dropped it, and `min_rerank_score` is the cutoff in force, so the trace can explain an empty answer.
+- `POST /api/turns/:id/answer {answer}`: the voice client posts everything the agent said after that recall, as one string, each time it grows. Only the person who asked can post; anyone else gets 404.
+- `GET /api/turns` (newest first) and `GET /api/turns/:id`, family only (D-A2). The trace screen shows the question, the answer, and for each memory who added it, when, its status, its current status and its scores.
 
 ## Write and review (demo steps 3-4)
 classify(text, person_id): embed as a document, then `$vectorSearch` candidates across all scopes for this person, then rerank-2.5, then decide for each candidate whether the new memory supersedes it (true/false). Return `{proposed_supersedes, candidates:[{memory_id, supersedes, rerank_score}]}`. Candidates are `verified` memories only (R19). proposed_supersedes is the top-ranked candidate with supersedes true, or null. It sits behind one function so the method can change (Q1 research pending; start with a rerank cutoff).
@@ -53,12 +57,12 @@ classify(text, person_id): embed as a document, then `$vectorSearch` candidates 
 - Multi-document changes use `session.withTransaction`. A memory is never stored with an empty embedding when the embed can run before the insert.
 
 ## Voice agent contract (for the ElevenLabs teammate)
-- Client tool: `recall {query}` returns `{turn_id, memories[{text, status}]}`. There is no `remember` tool in the MVP (A16).
-- After the agent answers, call `POST /api/turns/:turn_id/answer`.
-- Hardcoded prompt: today's date; answer only from recall results; with no results, say you're not sure and suggest asking family; use "you mentioned" for unverified memories; no medical advice; topic guidance written inline (D5). The `topic_guidance` collection is no longer read.
+- Client tool: `recall {query}` (the client adds `conversation_id`) returns `{turn_id, memories[{text, status, added_on, source:{role, name}}]}`. There is no `remember` tool in the MVP (A16). Full contract: `docs/api-reads.yaml`.
+- After the agent answers, call `POST /api/turns/:turn_id/answer` (done in `client/app/talk/voice.tsx`).
+- Prompt: `client/lib/prompt.ts`. Today's date (`{{today}}`, America/Toronto, from `/api/talk/session`; D-A5); answer only from recall results; read "today" in a memory against its `added_on`; attribute facts with `source.name`; with no results, say you're not sure and suggest asking family; no medical advice; topic guidance written inline (D5). The `topic_guidance` collection is no longer read.
 
 ## Household members
 Only the family admin adds or removes members (backend `POST /users`, requireFamilyAdmin). That is the admin's only extra power.
 
 ## Out of scope (NEXT_STEPS)
-Leakage test, `kind` field, live push notifications (change streams), an LLM classifier if Q1 lands on rerank-only, related/unrelated labels, time-series turns.
+Leakage test, `kind` field, caregiver trace access, per-household timezone, turns retention, live push notifications (change streams), an LLM classifier if Q1 lands on rerank-only, related/unrelated labels, time-series turns.

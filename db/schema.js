@@ -5,12 +5,12 @@
 // Schema versioning: every doc carries schema_version (int). Docs without it are v0 (pre-versioning).
 // Bump the number here, in seed.py and in queries.js when a collection's shape changes,
 // and add a migration under db/migrations that upgrades old docs.
-// Current: memories 1, people 1, households 1, audit_log 1.
+// Current: memories 1, people 1, households 1, audit_log 1, turns 1.
 const SV = { bsonType: ["int", "long"], minimum: 1 };
 
 const drop = (name) => { if (db.getCollectionNames().includes(name)) db[name].drop(); };
 // people is not dropped: it holds logins (auth only).
-["memories", "households", "audit_log", "replay_runs"].forEach(drop);
+["memories", "households", "audit_log", "replay_runs", "turns"].forEach(drop);
 
 db.createCollection("memories", {
   validator: { $jsonSchema: {
@@ -152,5 +152,8 @@ db.audit_log.createIndex({ memory_id: 1, at: -1 });
 
 db.createCollection("replay_runs");
 db.replay_runs.createIndex({ scenario_id: 1 });
+
+// turns: one doc per recall, read by the trace screen. Validator and index live in the migration.
+load("db/migrations/005_turns.js");
 
 print("Schema ready.");

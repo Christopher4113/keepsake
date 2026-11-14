@@ -4,44 +4,48 @@ import { useState } from "react";
 import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { Loader2, Mic, Square } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { FIRST_MESSAGE, PROMPT } from "@/lib/prompt";
 
-// Sent as a session override, so the prompt lives in this repo instead of the ElevenLabs dashboard.
-const PROMPT = `You are Keepsake, a warm, patient companion for {{name}}, who lives with dementia.
-
-How to speak:
-- Short, simple sentences. One idea at a time. Calm and kind.
-- Never argue, quiz, or bluntly correct {{name}}. Never give medical advice.
-
-Facts:
-- Before answering anything about people, family, plans, appointments, routines, places or belongings, call the recall tool with what they asked.
-- Only state facts that recall returns. If a memory's status is "unverified", say you're not completely sure and that family will check.
-- If recall finds nothing, say you don't know and offer to ask the family.
-- recall also returns guidance per topic. When the conversation touches a topic, follow its guidance exactly.
-
-Remembering:
-- When {{name}} tells you something new about their life, plans, people or wishes, call remember with one short third-person sentence, e.g. "Margaret said her sister Ruth visited yesterday".
-- Set private to true only if they ask to keep it secret from family.
-- After saving, tell them gently that you'll remember it.`;
-
-const FIRST_MESSAGE = "Hello {{name}}, it's lovely to hear from you. What's on your mind?";
+// One conversation per page. The current turn collects the agent's spoken answer for the trace.
+const convo = { conversationId: null as string | null, turnId: null as string | null, parts: new Map<string, string>() };
 
 async function post(path: string, body: unknown) {
   const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  return JSON.stringify(await res.json());
+  return res.json();
 }
 
+// recall is the agent's only tool in the MVP; Margaret doesn't add memories by voice (A16).
 const clientTools = {
-  recall: ({ query }: { query: string }) => post("/api/talk/recall", { query }),
-  remember: ({ text, private: isPrivate }: { text: string; private?: boolean }) =>
-    post("/api/talk/remember", { text, private: isPrivate === true }),
+  recall: async ({ query }: { query: string }) => {
+    const data = await post("/api/talk/recall", { query, conversation_id: convo.conversationId });
+    if (data.turn_id) {
+      convo.turnId = data.turn_id;
+      convo.parts.clear();
+    }
+    return JSON.stringify(data);
+  },
 };
+
+// Everything the agent says after a recall, until the next recall, is that turn's answer.
+// Parts are keyed by response id, so streamed resends replace rather than repeat; the whole answer is sent each time.
+function saveAnswer(message: string, key: string) {
+  if (!convo.turnId) return;
+  convo.parts.set(key, message);
+  post(`/api/turns/${convo.turnId}/answer`, { answer: [...convo.parts.values()].join(" ") }).catch(() => {});
+}
 
 function Talk() {
   const [caption, setCaption] = useState("");
   const [error, setError] = useState("");
   const { startSession, endSession, status, isSpeaking } = useConversation({
     clientTools,
-    onMessage: ({ message, source }) => source === "ai" && setCaption(message),
+    onConnect: ({ conversationId }) => { convo.conversationId = conversationId; },
+    onDisconnect: () => { convo.conversationId = null; convo.turnId = null; convo.parts.clear(); },
+    onMessage: ({ message, source, response_id, event_id }) => {
+      if (source !== "ai") return;
+      setCaption(message);
+      saveAnswer(message, response_id ?? String(event_id));
+    },
     onError: (message) => setError(String(message)),
   });
 
@@ -57,10 +61,10 @@ function Talk() {
     }
     const res = await fetch("/api/talk/session");
     if (!res.ok) return setError("I couldn't start. Please try again.");
-    const { signedUrl, agentId, name } = await res.json();
+    const { signedUrl, agentId, name, today } = await res.json();
     const shared = {
       clientTools,
-      dynamicVariables: { name },
+      dynamicVariables: { name, today },
       overrides: { agent: { prompt: { prompt: PROMPT }, firstMessage: FIRST_MESSAGE } },
     };
     startSession(signedUrl ? { ...shared, signedUrl } : { ...shared, agentId });

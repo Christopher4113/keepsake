@@ -11,7 +11,7 @@ Current decisions, grouped by topic. Each item is what holds now. IDs in bracket
 - Status is one of `unverified`, `verified`, `superseded`, `retracted`. Scope is one of `family`, `caregiver`. There is no `private` scope ([A17]).
 - [R11] `review.state: pending` is the review queue's source of truth; `flagged` is a UI hint only.
 - [A14] Each review candidate is `{memory_id, supersedes: bool, rerank_score}`. `proposed_supersedes` is the top-ranked candidate with `supersedes: true`, or null.
-- [R6] `turns` is `{schema_version, person_id, user_id, conversation_id, at, question, results[{memory_id, text, status, scope, author_name, author_role, created_at, vector_score, rerank_score}], answer}`, indexed `{person_id: 1, at: -1}`. Time-series turns stay in NEXT_STEPS.
+- [R6, D-A7] `turns` is `{schema_version, person_id, user_id, conversation_id, at, question, results[{memory_id, text, status, scope, author_name, author_role, created_at, vector_score, rerank_score}], top_rerank_score, min_rerank_score, degraded, answer}`, indexed `{person_id: 1, at: -1}` (migration 005). Empty recalls are logged too, with the best score and the cutoff, so the trace explains "I'm not sure". Time-series turns stay in NEXT_STEPS.
 - [R10] Audit actions: `write` on create; `approve` or `deny` on a review decision; `verify` when confirm has no proposed supersede. `audit_log` includes `person_id` and is indexed `{person_id: 1, at: -1}`.
 - [R12] Embeddings are voyage-3.5, 1024 dims, cosine; `input_type` is `document` on write and `query` on recall. The Python seed stays as dev tooling, with this config in one documented constant set.
 - [R7] Never store an empty embedding when the embed can run before the insert, and never copy `key` or `review` onto a new doc. Do not port `queries.js` `correct()` or `retrieveFallback()` as they are.
@@ -30,11 +30,14 @@ Current decisions, grouped by topic. Each item is what holds now. IDs in bracket
 
 ## Read path
 
-- [R5] Recall includes unverified memories and tags each result with its status.
-- [R16, A7] Recall is `$vectorSearch` (pre-filtered by `person_id`, readable scopes, and status in `[verified, unverified]`; `numCandidates` 100, limit 20), then rerank-2.5 (keep the top 5), then drop hits below `MIN_RERANK_SCORE` (a config constant, calibrated on the seed so out-of-knowledge questions return nothing). If none remain, return an empty list. Use vector order only if the Voyage call fails. The regex fallback runs only while the vector index is building.
+- [D-A1] Recall returns `verified` memories only. Unverified notes wait for family review and never reach the agent; a conflict between a verified and an unverified memory is settled by the supersede review, not at read time.
+- [R16, A7] Recall is `$vectorSearch` (pre-filtered by `person_id`, readable scopes, and `status: verified`; `numCandidates` 100, limit 20), then rerank-2.5 (keep the top 5), then drop hits below `MIN_RERANK_SCORE` (0.5, calibrated on the seed with `client/scripts/calibrate-recall.mts`). If none remain, return an empty list.
+- [D-A6] Voyage calls fail fast: 3s embed, 2s rerank, no retries. Rerank failure falls back to vector order with a `MIN_VECTOR_SCORE` floor; embed failure returns nothing (a keyword match answered "doctor's phone number" with the phone charger in testing); the keyword fallback runs only when `$vectorSearch` throws. Every turn records `degraded`.
+- [D-A4] Each recalled memory carries `added_on` and `source: {role, name}`, so the agent can say "Ravi mentioned…" and read "today" in a memory against the day it was written.
 - [R6, R17] Every recall writes a `turns` doc and returns `turn_id`. The client posts the spoken answer to `POST /api/turns/:id/answer`.
 - [A5] The trace (`GET /api/turns`, newest first, and `GET /api/turns/:id`) shows the question, the answer, and for each memory who added it, when, its status and its scores.
-- [D5, A11, R13] The agent prompt is hardcoded and includes today's date, the husband rule, "you mentioned" for unverified memories, no medical advice, and topic guidance written inline. Answer only from recall results; with none, say you are not sure and suggest asking family. Do not read the `topic_guidance` collection.
+- [D-A2] The trace is family only for the MVP; caregivers get 403. An answer can paraphrase a family-scope memory, so filtering results alone would leak.
+- [D5, A11, R13] The agent prompt is hardcoded (`client/lib/prompt.ts`) and includes today's date, the husband rule, no medical advice, and topic guidance written inline. Answer only from recall results; with none, say you are not sure and suggest asking family. Do not read the `topic_guidance` collection.
 
 ## Write path
 
@@ -59,7 +62,8 @@ Current decisions, grouped by topic. Each item is what holds now. IDs in bracket
 - Product: a voice agent for Margaret (early dementia). Family can verify, correct and scope her memories.
 - Demo: Margaret asks a question in the knowledge base and the voice answers; "How did it know this?" opens a trace of the question, the answer and each memory (who added it, when, status, scores); a caregiver adds a fact; the system finds conflicts (vector search + rerank-2.5, binary supersede); any family member sees "this memory will supersede the old one <old>" and confirms or denies.
 - [A4] Margaret speaks to the bot and hears the answer (voice in and out through ElevenLabs).
-- [A8, A16] The interface to the ElevenLabs teammate is `recall {query}`, which returns `{turn_id, memories[{text, status}]}`. There is no `remember` tool in the MVP. After the agent answers, call `POST /api/turns/:turn_id/answer`.
+- [A8, A16, D-A4] The interface to the ElevenLabs teammate is `recall {query}`, which returns `{turn_id, memories[{text, status, added_on, source:{role, name}}]}` (`docs/api-reads.yaml`). There is no `remember` tool in the MVP. After the agent answers, call `POST /api/turns/:turn_id/answer`.
+- [D-A5] Today's date is computed server-side in America/Toronto and passed as the `today` dynamic variable. Households have no timezone yet.
 
 ## Process
 
@@ -94,6 +98,8 @@ Current decisions, grouped by topic. Each item is what holds now. IDs in bracket
 - [Q8] Answered by [A9]: all memory logic is in the Next.js client.
 - [Q9] Answered by [A11]: topic guidance is hardcoded in the prompt ([D5] stands).
 - The brief and early demo flow said family can "expire" memories, the system labels "supersedes/related/unrelated", and only the family admin confirms. Replaced by [A10], [A14] and [A12].
+- [R5] Recall included unverified memories tagged with status, and the prompt said "you mentioned" for them. Replaced by [D-A1].
+- The trace for caregivers in their own scopes (SPEC role table). Replaced by [D-A2].
 - [R4] Memories Margaret created herself had scope `family`, were unverified and flagged, never proposed a supersede, and private wishes stayed private and verified. Replaced by [A16] (Margaret does not add memories in the MVP).
 - [A8] The voice contract included a `remember {text, private?}` tool. Replaced by [A16]; `remember` moves to `docs/NEXT_STEPS.md`.
 - [R24] Classify excluded `private`-scope memories unless the writer was the person. Replaced by [A17] (there is no `private` scope).
