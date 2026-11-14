@@ -7,6 +7,15 @@ const SCOPES = {
   caregiver: ["caregiver"]
 };
 
+// Who is calling: user_id -> person_id + role. Uses the members.user_id index.
+function whoami(userId) {
+  const h = db.households.findOne(
+    { "members.user_id": userId },
+    { person_id: 1, "members.$": 1 }
+  );
+  return h ? { person_id: h.person_id, ...h.members[0] } : null;
+}
+
 // Role-scoped retrieval. qv is the query embedding (1024 dims).
 function retrieve(personId, role, qv, limit = 8) {
   return db.memories.aggregate([
@@ -22,7 +31,7 @@ function retrieve(personId, role, qv, limit = 8) {
           status: { $in: ["verified", "unverified"] }
         }
     }},
-    { $project: { text: 1, kind: 1, scope: 1, status: 1, score: { $meta: "vectorSearchScore" } } }
+    { $project: { text: 1, scope: 1, status: 1, score: { $meta: "vectorSearchScore" } } }
   ]).toArray();
 }
 
@@ -41,16 +50,16 @@ function correct(oldId, newText, actor) {
   const old = db.memories.findOne({ _id: oldId });
   const { _id, ...rest } = old;
   const newId = db.memories.insertOne({
-    ...rest, text: newText, status: "verified", supersedes: oldId,
+    ...rest, schema_version: 1, text: newText, status: "verified", supersedes: oldId,
     source: actor, flagged: false, embedding: [], created_at: new Date()
   }).insertedId;
   db.memories.updateOne({ _id: oldId }, { $set: { status: "superseded" } });
-  db.audit_log.insertOne({ memory_id: newId, action: "correct", actor, old_id: oldId, new_id: newId, at: new Date() });
+  db.audit_log.insertOne({ schema_version: 1, memory_id: newId, action: "correct", actor, old_id: oldId, new_id: newId, at: new Date() });
   return newId;
 }
 
 // Forget: delete content and embedding, keep a content-free audit row.
 function forget(id, actor) {
   db.memories.deleteOne({ _id: id });
-  db.audit_log.insertOne({ memory_id: id, action: "forget", actor, old_id: id, new_id: null, at: new Date() });
+  db.audit_log.insertOne({ schema_version: 1, memory_id: id, action: "forget", actor, old_id: id, new_id: null, at: new Date() });
 }

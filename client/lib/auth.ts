@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { SignJWT, jwtVerify } from "jose";
+import { jwtVerify } from "jose";
 
 export type Role = "person" | "family" | "caregiver";
 // person_id is the household link: Anna and Ravi both carry person_id "margaret".
@@ -9,15 +9,20 @@ export type Session = { user_id: string; name: string; role: Role; person_id: st
 const COOKIE = "keepsake_session";
 const key = () => new TextEncoder().encode(process.env.AUTH_SECRET);
 
-export async function createSession(s: Session) {
-  const token = await new SignJWT(s).setProtectedHeader({ alg: "HS256" }).setExpirationTime("7d").sign(key());
+// The user service issues the token at login; the client only stores and verifies it (same AUTH_SECRET).
+export async function setSessionCookie(token: string) {
   (await cookies()).set(COOKIE, token, {
     httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: 60 * 60 * 24 * 7,
   });
 }
 
+// Raw token, forwarded as `Authorization: Bearer` to backend services.
+export async function getToken() {
+  return (await cookies()).get(COOKIE)?.value ?? null;
+}
+
 export async function getSession(): Promise<Session | null> {
-  const token = (await cookies()).get(COOKIE)?.value;
+  const token = await getToken();
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, key());
@@ -39,4 +44,10 @@ export async function requireSession(roles?: Role[]) {
   if (!s) redirect("/login");
   if (roles && !roles.includes(s.role)) redirect(homeFor(s.role));
   return s;
+}
+
+// requireSession plus the raw token, for pages that call the user service.
+export async function requireAuth(roles?: Role[]) {
+  const session = await requireSession(roles);
+  return { session, token: (await getToken())! };
 }

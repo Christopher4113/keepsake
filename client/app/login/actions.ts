@@ -1,29 +1,27 @@
 "use server";
 
-import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
-import { getDb } from "@/lib/db";
-import { createSession, destroySession, homeFor, type Session } from "@/lib/auth";
+import { destroySession, homeFor, setSessionCookie } from "@/lib/auth";
+import { userService, type ServiceError } from "@/lib/userService";
 
 export async function login(_: string | null, form: FormData) {
   const email = String(form.get("email") ?? "").trim().toLowerCase();
   const password = String(form.get("password") ?? "");
   if (!email || !password) return "Enter your email and password.";
 
-  const db = await getDb();
-  const user = await db.collection("people").findOne({ email });
-  if (!user?.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
-    return "Email or password is incorrect.";
+  let role;
+  try {
+    const { token, user } = await userService.login(email, password);
+    await setSessionCookie(token);
+    role = user.role;
+  } catch (e) {
+    const { status, code } = e as ServiceError;
+    if (status === 401 || status === 400) return "Email or password is incorrect.";
+    if (code === "no_household") return "This account isn't linked to a household yet.";
+    console.error("login failed", e);
+    return "Sign-in is unavailable right now. Try again in a moment.";
   }
-
-  // Role and household link live on households.members, not on people.
-  const household = await db.collection("households").findOne({ "members.user_id": user.user_id });
-  const member = household?.members.find((m: { user_id: string }) => m.user_id === user.user_id);
-  if (!member) return "This account isn't linked to a household yet.";
-
-  const role = member.role as Session["role"];
-  await createSession({ user_id: user.user_id, name: user.name, role, person_id: household!.person_id });
-  redirect(homeFor(role));
+  redirect(homeFor(role)); // outside try: redirect() works by throwing
 }
 
 export async function logout() {
