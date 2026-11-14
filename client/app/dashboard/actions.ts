@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { requireSession } from "@/lib/auth";
-import { getDb } from "@/lib/db";
 import {
   ConfirmMismatch, WriteError, correctMemory as correct, createMemory, forgetMemory as forget, reviewMemory,
   type BatchResult, type FactInput, type OldMemory, type WriteResult,
@@ -94,19 +93,5 @@ export async function denyMemory(form: FormData) { await decide(form, "deny"); }
 export async function forgetMemory(form: FormData) {
   const s = await requireSession(["family"]);
   await forget(s, str(form, "id"));
-  revalidatePath("/dashboard");
-}
-
-export async function saveGuidance(form: FormData) {
-  const s = await requireSession(["family"]);
-  const topic = str(form, "topic").toLowerCase();
-  const guidance = str(form, "guidance");
-  if (!topic || !guidance) throw new Error("Topic and guidance are required");
-
-  await (await getDb()).collection("topic_guidance").updateOne(
-    { person_id: s.person_id, topic },
-    { $set: { guidance, set_by: s.user_id, updated_at: new Date() }, $setOnInsert: { related_memory_ids: [] } },
-    { upsert: true },
-  );
   revalidatePath("/dashboard");
 }

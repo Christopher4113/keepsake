@@ -13,8 +13,6 @@ To update an existing cluster without dropping data, run the scripts in `db/migr
 
 Memory fields: `scope` is private, family or caregiver. `status` is unverified, verified, superseded or retracted.
 
-Topic guidance (husband question) is hardcoded in the agent prompt for the MVP. See `NEXT_STEPS.md`.
-
 Role read rules: person reads private, family and caregiver. Family reads family and caregiver. Caregiver reads caregiver only.
 
 Voyage usage: `voyage-3.5` with `input_type="document"` for stored memories and `input_type="query"` for questions. `rerank-2.5` reorders the filtered vector hits before they reach the LLM.

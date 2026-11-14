@@ -44,7 +44,7 @@
       "must_include": [
         "husband"
       ],
-      "note": "Retrieval must find the fact so the hardcoded guidance can apply. The reply must not say he died."
+      "note": "Retrieval only: the fact must be found. There is no topic guidance, so how the reply handles it rests on the prompt's general never-bluntly-correct rule."
     },
     {
       "id": "R08_family_note_hidden_from_caregiver",

@@ -11,7 +11,7 @@ const ravi = { role: "caregiver", user_id: "ravi" };
 const marg = { role: "person", user_id: "margaret" };
 const sam  = { role: "family", user_id: "sam" };
 
-["memories", "people", "topic_guidance", "audit_log", "replay_runs"].forEach(c => db[c].deleteMany({}));
+["memories", "people", "audit_log", "replay_runs"].forEach(c => db[c].deleteMany({}));
 
 // Every demo login uses password "keepsake" (bcrypt hash below). Email is <user_id>@keepsake.test.
 const password_hash = "$2b$10$OwUnGqFauqbAzW8RROu5M.1cVcMbd1ZrVxJvdXg13n74VvWsoys9m";
@@ -67,15 +67,5 @@ const harold = [
 ].map(m => base({ person_id: "harold", ...m }));
 
 const ids = db.memories.insertMany([...margaret, ...harold]).insertedIds;
-const husband = db.memories.findOne({ demo_tag: "husband" });
-
-db.topic_guidance.insertOne({
-  person_id: "margaret",
-  topic: "husband",
-  guidance: "Don't correct her bluntly or say he died. Acknowledge the feeling, then offer the Lisbon photo album or ask about their trip.",
-  related_memory_ids: [husband._id],
-  set_by: "anna",
-  updated_at: now
-});
 
 print(`Seeded ${Object.keys(ids).length} memories.`);

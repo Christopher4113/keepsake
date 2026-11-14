@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { WithId, Document, ObjectId } from "mongodb";
-import { Check, Clock, Eraser, Heart, History, Link2, PencilLine, Plus, Replace, X } from "lucide-react";
+import { Check, Clock, Eraser, History, Link2, PencilLine, Plus, Replace, X } from "lucide-react";
 import { requireAuth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { SCOPES, visibleTo } from "@/lib/memories";
@@ -11,14 +11,10 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
 import { LogoutButton } from "../logout-button";
 import { CaregiverView } from "./caregiver";
 import { ConfirmButton } from "./confirm-button";
-import { denyMemory, forgetMemory, saveGuidance, verifyMemory } from "./actions";
+import { denyMemory, forgetMemory, verifyMemory } from "./actions";
 import { AddMemoryForm, CorrectForm } from "./memory-forms";
 import { readableScopes } from "@/lib/recall";
 
@@ -44,9 +40,8 @@ export default async function DashboardPage() {
   const db = await getDb();
   const live = { ...visibleTo(me), status: { $in: ["unverified", "verified"] } };
 
-  const [memories, guidance, activity] = await Promise.all([
+  const [memories, activity] = await Promise.all([
     db.collection("memories").find(live, { projection: { embedding: 0 } }).sort({ created_at: -1 }).toArray(),
-    db.collection("topic_guidance").find({ person_id: me.person_id }).sort({ topic: 1 }).toArray(),
     db.collection("audit_log").find({ person_id: me.person_id, scope: { $in: SCOPES[me.role] } }).sort({ at: -1 }).limit(20).toArray(),
   ]);
 
@@ -202,30 +197,6 @@ export default async function DashboardPage() {
               </CardHeader>
               <CardContent>
                 <AddMemoryForm personName={person?.name} scopes={readableScopes(me.role)} />
-              </CardContent>
-            </Card>
-
-            <Card className={panel}>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 font-serif text-xl font-normal"><Heart className="size-4 text-primary" aria-hidden /> Conversation guidance</CardTitle>
-                <CardDescription>How Keepsake handles sensitive topics.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                {guidance.map((g) => (
-                  <form key={g.topic} action={saveGuidance} className="space-y-2">
-                    <input type="hidden" name="topic" value={g.topic} />
-                    <Label htmlFor={`g-${g.topic}`} className="capitalize">{g.topic}</Label>
-                    <Textarea id={`g-${g.topic}`} name="guidance" defaultValue={g.guidance} rows={3} />
-                    <Button size="sm" variant="outline" className="rounded-full">Save</Button>
-                  </form>
-                ))}
-                <Separator />
-                <form action={saveGuidance} className="space-y-2">
-                  <Label htmlFor="g-new-topic">New topic</Label>
-                  <Input id="g-new-topic" name="topic" required placeholder="e.g. driving" />
-                  <Textarea name="guidance" required rows={2} aria-label="Guidance for the new topic" placeholder="How should Keepsake respond?" />
-                  <Button size="sm" variant="outline" className="rounded-full"><Plus /> Add topic</Button>
-                </form>
               </CardContent>
             </Card>
 
