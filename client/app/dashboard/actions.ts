@@ -9,8 +9,9 @@ import { SCHEMA_VERSION, SCOPES, actor, audit, embed, visibleTo, type Scope } fr
 const str = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 
 // Loads a live memory only if this user may see it; anything else acts as "not found".
+// Reviewing and editing are family-only: caregivers can add notes but never change one.
 async function loadVisible(form: FormData) {
-  const s = await requireSession(["family", "caregiver"]);
+  const s = await requireSession(["family"]);
   const id = str(form, "id");
   if (!ObjectId.isValid(id)) throw new Error("Bad memory id");
   const _id = new ObjectId(id);
@@ -22,18 +23,23 @@ async function loadVisible(form: FormData) {
   return { s, db, mem, _id };
 }
 
+// Family additions are trusted. Caregiver notes are always caregiver scope and wait in
+// family's review queue; until then the agent treats them as unverified.
 export async function addMemory(form: FormData) {
   const s = await requireSession(["family", "caregiver"]);
+  const caregiver = s.role === "caregiver";
   const text = str(form, "text");
-  const scope = str(form, "scope") as Scope;
+  const scope = (caregiver ? "caregiver" : str(form, "scope")) as Scope;
   const expires = str(form, "expires_at");
   if (!text || !SCOPES[s.role].includes(scope)) throw new Error("Invalid memory");
 
   const db = await getDb();
   const { insertedId } = await db.collection("memories").insertOne({
-    schema_version: SCHEMA_VERSION, person_id: s.person_id, text, scope, status: "verified", source: actor(s),
-    supersedes: null, flagged: false, expires_at: expires ? new Date(expires) : null,
+    schema_version: SCHEMA_VERSION, person_id: s.person_id, text, scope,
+    status: caregiver ? "unverified" : "verified", flagged: caregiver, source: actor(s),
+    supersedes: null, expires_at: expires ? new Date(expires) : null,
     embedding: [], created_at: new Date(),
+    ...(caregiver && { review: { state: "pending", proposed_supersedes: null, candidates: [], decided_by: null, decided_at: null } }),
   });
   await audit(s, insertedId, "write", scope);
   await embed(insertedId, text);

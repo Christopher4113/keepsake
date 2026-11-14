@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { LogoutButton } from "../logout-button";
+import { CaregiverView } from "./caregiver";
 import { ConfirmButton } from "./confirm-button";
 import { addMemory, correctMemory, denyMemory, forgetMemory, saveGuidance, verifyMemory } from "./actions";
 
@@ -33,18 +34,21 @@ const panel = "rounded-2xl border-border/70 shadow-[0_20px_50px_-35px_rgba(80,40
 
 export default async function DashboardPage() {
   const { session: me, token } = await requireAuth(["family", "caregiver"]);
+  const team = await userService.careTeam(token);
+  const person = team.find((p) => p.role === "person");
+  // Caregivers only add notes; the review dashboard below is family-only.
+  if (me.role === "caregiver") return <CaregiverView me={me} personName={person?.name} />;
+
   const db = await getDb();
   const live = { ...visibleTo(me), status: { $in: ["unverified", "verified"] } };
 
-  const [team, memories, guidance, activity] = await Promise.all([
-    userService.careTeam(token),
+  const [memories, guidance, activity] = await Promise.all([
     db.collection("memories").find(live, { projection: { embedding: 0 } }).sort({ created_at: -1 }).toArray(),
     db.collection("topic_guidance").find({ person_id: me.person_id }).sort({ topic: 1 }).toArray(),
     db.collection("audit_log").find({ person_id: me.person_id, scope: { $in: SCOPES[me.role] } }).sort({ at: -1 }).limit(20).toArray(),
   ]);
 
   const names = Object.fromEntries(team.map((p) => [p.user_id, p.name]));
-  const person = team.find((p) => p.role === "person");
   const review = memories.filter((m) => m.status === "unverified" || m.flagged);
   const verified = memories.filter((m) => !review.includes(m));
 
@@ -134,7 +138,7 @@ export default async function DashboardPage() {
         <section className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
           <div className="space-y-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
-              {me.role === "family" ? "Family space" : "Care team space"}
+              Family space
             </p>
             <h1 className="font-serif text-5xl leading-tight">{person?.name}&apos;s <em className="text-primary">memory</em></h1>
           </div>
@@ -221,30 +225,21 @@ export default async function DashboardPage() {
                 <CardDescription>How Keepsake handles sensitive topics.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
-                {guidance.map((g) => me.role === "family" ? (
+                {guidance.map((g) => (
                   <form key={g.topic} action={saveGuidance} className="space-y-2">
                     <input type="hidden" name="topic" value={g.topic} />
                     <Label htmlFor={`g-${g.topic}`} className="capitalize">{g.topic}</Label>
                     <Textarea id={`g-${g.topic}`} name="guidance" defaultValue={g.guidance} rows={3} />
                     <Button size="sm" variant="outline" className="rounded-full">Save</Button>
                   </form>
-                ) : (
-                  <div key={g.topic} className="space-y-1">
-                    <p className="text-sm font-medium capitalize">{g.topic}</p>
-                    <p className="text-sm text-muted-foreground">{g.guidance}</p>
-                  </div>
                 ))}
-                {me.role === "family" && (
-                  <>
-                    <Separator />
-                    <form action={saveGuidance} className="space-y-2">
-                      <Label htmlFor="g-new-topic">New topic</Label>
-                      <Input id="g-new-topic" name="topic" required placeholder="e.g. driving" />
-                      <Textarea name="guidance" required rows={2} aria-label="Guidance for the new topic" placeholder="How should Keepsake respond?" />
-                      <Button size="sm" variant="outline" className="rounded-full"><Plus /> Add topic</Button>
-                    </form>
-                  </>
-                )}
+                <Separator />
+                <form action={saveGuidance} className="space-y-2">
+                  <Label htmlFor="g-new-topic">New topic</Label>
+                  <Input id="g-new-topic" name="topic" required placeholder="e.g. driving" />
+                  <Textarea name="guidance" required rows={2} aria-label="Guidance for the new topic" placeholder="How should Keepsake respond?" />
+                  <Button size="sm" variant="outline" className="rounded-full"><Plus /> Add topic</Button>
+                </form>
               </CardContent>
             </Card>
 
