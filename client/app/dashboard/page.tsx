@@ -1,7 +1,8 @@
 import type { WithId, Document, ObjectId } from "mongodb";
-import { requireSession } from "@/lib/auth";
+import { requireAuth } from "@/lib/auth";
 import { getDb } from "@/lib/db";
 import { SCOPES, visibleTo } from "@/lib/memories";
+import { userService } from "@/lib/userService";
 import { LogoutButton } from "../logout-button";
 import { ConfirmButton } from "./confirm-button";
 import { addMemory, correctMemory, denyMemory, forgetMemory, saveGuidance, verifyMemory } from "./actions";
@@ -15,18 +16,17 @@ const btn = "rounded border px-2 py-1 text-sm";
 const input = "rounded border px-2 py-1";
 
 export default async function DashboardPage() {
-  const me = await requireSession(["family", "caregiver"]);
+  const { session: me, token } = await requireAuth(["family", "caregiver"]);
   const db = await getDb();
   const live = { ...visibleTo(me), status: { $in: ["unverified", "verified"] } };
 
-  const [household, memories, guidance, activity] = await Promise.all([
-    db.collection("households").findOne({ person_id: me.person_id }),
+  const [team, memories, guidance, activity] = await Promise.all([
+    userService.careTeam(token),
     db.collection("memories").find(live, { projection: { embedding: 0 } }).sort({ created_at: -1 }).toArray(),
     db.collection("topic_guidance").find({ person_id: me.person_id }).sort({ topic: 1 }).toArray(),
     db.collection("audit_log").find({ person_id: me.person_id, scope: { $in: SCOPES[me.role] } }).sort({ at: -1 }).limit(20).toArray(),
   ]);
 
-  const team: { user_id: string; name: string; role: string; relation?: string }[] = household?.members ?? [];
   const names = Object.fromEntries(team.map((p) => [p.user_id, p.name]));
   const person = team.find((p) => p.role === "person");
   const review = memories.filter((m) => m.status === "unverified" || m.flagged);
