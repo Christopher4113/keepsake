@@ -1,6 +1,6 @@
 # User service
 
-Login, who-am-I, care team and adding users for Keepsake. It reads `people` (users, credentials, roles) and `households` (one per person, with `timezone`). See `db/schema.js`. Memory endpoints live in the memory service (`docs/memory-service-plan.md`).
+Login, who-am-I, care team and adding users for Keepsake. It uses the data model on `main` (see `db/README.md`): `people` holds logins only (`user_id`, `name`, `email`, `password_hash`), and `households.members[]` holds membership and roles (`role`, `admin`, `relation`, `shift`). Memory endpoints live in the memory service (`docs/memory-service-plan.md`).
 
 ## Run
 
@@ -8,7 +8,8 @@ From the repo root, fill in `.env` (see `.env.example`). `AUTH_SECRET` must be t
 
 ```sh
 mongosh "$MONGODB_URI/$MONGODB_DB" db/schema.js   # collections + indexes
-python db/seed.py                                  # demo data
+mongosh "$MONGODB_URI/$MONGODB_DB" db/create_vector_index.js
+.venv/bin/python db/seed.py                        # demo households and memories (logins in people are kept)
 cd backend && npm install && npm run dev           # http://127.0.0.1:4000
 npm test                                           # offline, uses mongodb-memory-server
 ```
@@ -18,7 +19,7 @@ Demo logins: `<user_id>@keepsake.test`, password `keepsake`. The users are marga
 ## Auth model
 
 - `POST /auth/login` returns an HS256 JWT signed with `AUTH_SECRET`. Its payload is `{user_id, name, role, person_id}`, the same as `client/lib/auth.ts`, and it expires in 7 days.
-- Every other endpoint needs `Authorization: Bearer <token>`. On each request the service reloads the caller from `people`, so a deactivated user (`active: false`) is rejected immediately. Role, household and `admin` always come from the database, never from the token.
+- Every other endpoint needs `Authorization: Bearer <token>`. On each request the service re-reads the caller's membership from `households` (the `whoami` lookup in `db/queries.js`). Removing someone from `members` cuts their access immediately. Role, household and `admin` always come from the database, never from the token.
 - The service also accepts tokens the web client signs itself (same secret, same payload).
 
 ## Endpoints
@@ -90,7 +91,7 @@ try {
 }
 ```
 
-To pass the token to other calls, add a `getToken()` next to `getSession()` that returns the raw `keepsake_session` cookie value. The dashboard's care circle then becomes `await userService.careTeam(await getToken())` instead of reading `people` directly.
+To pass the token to other calls, add a `getToken()` next to `getSession()` that returns the raw `keepsake_session` cookie value. The dashboard's care circle then becomes `await userService.careTeam(await getToken())` instead of reading `household.members` directly.
 
 ## Voice agent (ElevenLabs)
 
@@ -98,9 +99,8 @@ In the web client, the voice agent runs as Margaret through her login. `/api/tal
 
 If the agent later calls this API directly through ElevenLabs webhook tools, pass the token as the `secret__keepsake_token` dynamic variable and send `Authorization: Bearer {{secret__keepsake_token}}`. `secret__` variables are never shown to the LLM.
 
-## Migrating the web client to this data model
+## Data model notes
 
-The `web` branch currently reads role and household from `households.members[]`. In this model they live on `people` (`role`, `person_id`, `admin`, `active`), and `households` only has `timezone`. Two client changes:
-
-- **Login**: call `userService.login()` as shown above. If the client keeps querying Mongo itself for now, read `role` and `person_id` from the `people` doc instead of the households lookup.
-- **Care circle**: `userService.careTeam(token)` instead of `household.members`.
+- Login checks the password against `people`, then finds the household with `members.user_id`. A login with no household gets 403 `no_household`.
+- `POST /users` writes a login to `people` (with `schema_version`), then pushes a member onto the admin's household. If the push fails, for example because the household already has 50 members, the login is deleted again.
+- `/auth/me` returns `person.timezone` from `households.timezone`. It is `null` until the seed sets it.

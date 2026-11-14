@@ -34,11 +34,16 @@ describe("POST /auth/login", () => {
   it.each([
     ["wrong password", { email: "anna@keepsake.test", password: "nope" }],
     ["unknown email", { email: "nobody@keepsake.test", password: PASSWORD }],
-    ["deactivated user", { email: "former@keepsake.test", password: PASSWORD }],
   ])("rejects %s with the same generic error", async (_label, payload) => {
     const res = await t.app.inject({ method: "POST", url: "/auth/login", payload });
     expect(res.statusCode).toBe(401);
     expect(res.json()).toEqual({ error: { code: "invalid_credentials", message: "Email or password is incorrect." } });
+  });
+
+  it("refuses a login with no household", async () => {
+    const res = await t.app.inject({ method: "POST", url: "/auth/login", payload: { email: "former@keepsake.test", password: PASSWORD } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe("no_household");
   });
 
   it("validates the body", async () => {
@@ -67,7 +72,7 @@ describe("GET /auth/me", () => {
     expect(res.json()).toMatchObject({ user_id: "margaret", role: "person", admin: false });
   });
 
-  it("uses the database role, not the token's claims", async () => {
+  it("uses the household role, not the token's claims", async () => {
     const forged = await new SignJWT({ user_id: "ravi", name: "Ravi", role: "family", person_id: "harold" })
       .setProtectedHeader({ alg: "HS256" }).setExpirationTime("1h").sign(new TextEncoder().encode(SECRET));
     const res = await t.app.inject({ method: "GET", url: "/auth/me", headers: bearer(forged) });
@@ -96,9 +101,9 @@ describe("GET /auth/me", () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it("401s right away once the user is deactivated", async () => {
+  it("401s right away once the user is removed from the household", async () => {
     const token = await t.login("ravi");
-    await t.cols.people.updateOne({ user_id: "ravi" }, { $set: { active: false } });
+    await t.cols.households.updateOne({ person_id: "margaret" }, { $pull: { members: { user_id: "ravi" } } });
     const res = await t.app.inject({ method: "GET", url: "/auth/me", headers: bearer(token) });
     expect(res.statusCode).toBe(401);
   });

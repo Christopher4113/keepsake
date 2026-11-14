@@ -19,11 +19,11 @@ Out of scope: anything touching `memories`, which goes in a separate PR (see `do
 |---|---|
 | Stack | Node + TypeScript (the project brief says Python/FastAPI; the team chose Node to match the Next.js client), Fastify + `fastify-type-provider-zod`, native `mongodb`, `bcryptjs`, `jose`, `vitest` + `mongodb-memory-server` |
 | Location | `backend/`, a sibling of the web branch's `client/` |
-| Users | `people` (one doc per user: credentials, role, `admin`, `active`) with `person_id` as the foreign key to `households` (one doc per person: `timezone`). Unique `user_id` and `email`. |
+| Users | `main`'s model (PR #3): `people` is auth only, and `households.members[]` owns role, `admin`, `relation` and `shift`. Unique `user_id`, `email` and `members.user_id`. |
 | Login | Email + password, checked with `bcryptjs`. Emails are lowercased. Errors are generic ("Email or password is incorrect."). |
 | Token | HS256 JWT signed with the shared `AUTH_SECRET`. Payload `{user_id, name, role, person_id}`, the same as `client/lib/auth.ts`. Expires in 7 days, the same as the client cookie. |
 | Web client | The login server action calls `POST /auth/login` and stores the returned token in `keepsake_session` as it does today. `requireSession` keeps verifying locally. Next calls our APIs server to server with `Authorization: Bearer`, so the browser needs no CORS. |
-| Revocation | API requests load the caller's `people` doc by `user_id` (indexed) and reject it if it's missing or `active: false`. `admin` comes from the DB, not the token. |
+| Revocation | Every API request re-reads membership from `households`. Removing a member cuts access at once. `admin` comes from the DB, not the token. |
 | Agent | Runs as Margaret (role `person`) through her web login. The web client's `/api/talk/*` routes use the `keepsake_session` cookie and forward it as Bearer to backend services. ElevenLabs webhook tools can use `secret__keepsake_token` later if they call the API directly. |
 | User creation | `POST /users` is for family admins only. `person_id` is forced to the admin's own household. Roles allowed: `family`, `caregiver`. |
 | Care team | `GET /care-team` returns the caller's household only: `{user_id, name, role, relation, shift}`, with no email or credentials. Any role can call it. |
@@ -32,13 +32,9 @@ Out of scope: anything touching `memories`, which goes in a separate PR (see `do
 | Client changes | Not in this PR. The README ships a typed contract and a ready-to-paste `client/lib/userService.ts` for the web owner. |
 | Public URL | Local with a tunnel during the build, then deploy once before 3:30 as a backup |
 
-## Database prerequisite (branch `db-people-households`, lands on `main` first)
+## Data model
 
-`main` (PR #1) had a `households` doc with an embedded `members[]`. The web branch had a flat `people` collection. The decision was both, joined by a foreign key:
-
-- `households`: `{person_id (unique), timezone}`, for household-level settings only.
-- `people`: `{user_id (unique), name, email (unique), password_hash, role, person_id → households, admin?, active, relation?, shift?}`. Membership lives only here.
-- `seed.py`: demo logins `<user_id>@keepsake.test` / `keepsake`, and Harold and Sam as the second household. Memories stay without `kind`.
+This plan first moved roles onto `people`. Emily's PR #3 merged first and chose the opposite: `people` is auth only and roles live in `households.members`, with `schema_version` on every doc. The web client uses that model too, so the user service adopted it and changes nothing in `db/`. `households.timezone` is optional and read when present.
 
 ## Endpoints
 
@@ -59,7 +55,7 @@ backend/
   src/
     config.ts   zod-parsed env: MONGODB_URI, MONGODB_DB, AUTH_SECRET, TOKEN_TTL, PORT, HOST
     db.ts       people / households types and collections
-    auth.ts     sign session (same as client), authenticate (verify + reload active user), requireFamilyAdmin
+    auth.ts     sign session (same as client), authenticate (verify + re-read household membership), requireFamilyAdmin
     routes.ts   /health, /auth/login, /auth/me, /care-team, POST /users
     errors.ts   HttpError + { error: { code, message } } handler
     app.ts      buildApp({ db, config }); tests inject against this

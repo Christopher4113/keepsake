@@ -48,8 +48,13 @@ describe("POST /users", () => {
       payload: { ...newUser, person_id: "margaret", admin: true },
     });
     expect(res.statusCode).toBe(201);
-    const doc = await t.cols.people.findOne({ email: "mary@keepsake.test" });
-    expect(doc).toMatchObject({ person_id: "harold", admin: false, active: true });
+    const login = await t.cols.people.findOne({ email: "mary@keepsake.test" });
+    expect(login).toMatchObject({ schema_version: 1, user_id: "mary-ann" });
+    expect(login).not.toHaveProperty("role");
+    const harold = await t.cols.households.findOne({ person_id: "harold" });
+    expect(harold!.members.at(-1)).toEqual({ user_id: "mary-ann", name: "Mary Ann", role: "caregiver", admin: false, shift: "weekends" });
+    const margaret = await t.cols.households.findOne({ person_id: "margaret" });
+    expect(margaret!.members.map((m) => m.user_id)).not.toContain("mary-ann");
   });
 
   it.each(["margaret", "ravi"])("forbids non-admin %s", async (who) => {
@@ -80,6 +85,16 @@ describe("POST /users", () => {
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("email_taken");
+  });
+
+  it("leaves no orphan login when the household is full", async () => {
+    await t.cols.households.updateOne({ person_id: "margaret" }, {
+      $push: { members: { $each: Array.from({ length: 47 }, (_, i) => ({ user_id: `filler-${i}`, name: "F", role: "caregiver" as const })) } },
+    });
+    const res = await t.app.inject({ method: "POST", url: "/users", headers: bearer(await t.login("anna")), payload: newUser });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("household_full");
+    expect(await t.cols.people.findOne({ email: "mary@keepsake.test" })).toBeNull();
   });
 
   it("suffixes the user_id when the name is taken", async () => {
