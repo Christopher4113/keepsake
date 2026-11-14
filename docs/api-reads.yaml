@@ -9,8 +9,9 @@ info:
     `api-writes.yaml`.
 
     All routes are HTTP routes in the Next.js client (`client/app/api`).
-    Search logic lives in `client/lib/recall.ts`; the agent prompt lives
-    in `client/lib/prompt.ts`.
+    Search logic lives in `client/lib/recall.ts`, trace reads in
+    `client/lib/turns.ts` (also used by the `/trace` pages), and the
+    agent prompt in `client/lib/prompt.ts`.
 
     Auth: the `keepsake_session` cookie (JWT issued by the user service).
     Trust the token for `user_id` only. Margaret (role `person`) is the
@@ -217,7 +218,6 @@ paths:
     get:
       operationId: listTurns
       tags: [Trace]
-      x-status: planned (Track A trace PR)
       summary: List turns, newest first
       description: |
         The trace list. Family only (any family member, including the
@@ -280,7 +280,6 @@ paths:
     get:
       operationId: getTurn
       tags: [Trace]
-      x-status: planned (Track A trace PR)
       summary: One turn, with every memory the agent was given
       description: |
         The trace detail. Family only; caregivers get 403 (D-A2).
