@@ -1,8 +1,19 @@
 # keepsake
 
+[![Winner — Best use of ElevenLabs](https://img.shields.io/badge/Winner-Best%20use%20of%20ElevenLabs-111111?style=for-the-badge&logo=elevenlabs&logoColor=white)](https://vimeo.com/1248785425)
+
+**Winner of the ElevenLabs track — Best use of ElevenLabs** at the Agents in Context Toronto Hackathon by MongoDB and Cerebral Valley.
+
 Family-governed memory for people with dementia. The person talks to a voice agent (ElevenLabs); family and caregivers verify, correct and forget what it remembers (MongoDB Atlas + Vector Search).
 
-Won Best use of ElevenLabs at Agents in Context Toronto Hackathon by MongoDB and Cerebral Valley
+## Demo
+
+<a href="https://vimeo.com/1248785425">
+  <img src="https://i.vimeocdn.com/video/2228974096-4e4aed9dc677ab94f93536717b1dc6664f512d04e78f85b7ff1434d4b150a990-d_1280?region=us" alt="keepsake demo — Best use of ElevenLabs. Click to watch on Vimeo." width="720">
+</a>
+
+[Watch the demo on Vimeo](https://vimeo.com/1248785425) (1 minute).
+
 ## Run
 
 ```bash
