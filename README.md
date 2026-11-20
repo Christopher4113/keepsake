@@ -2,6 +2,7 @@
 
 Family-governed memory for people with dementia. The person talks to a voice agent (ElevenLabs); family and caregivers verify, correct and forget what it remembers (MongoDB Atlas + Vector Search).
 
+Won Best use of ElevenLabs at Agents in Context Toronto Hackathon by MongoDB and Cerebral Valley
 ## Run
 
 ```bash
