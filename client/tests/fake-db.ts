@@ -40,6 +40,8 @@ export function fakeDb(seed: Record<string, Doc[]> = {}) {
   const collection = (name: string) => {
     store[name] ??= [];
     return {
+      // MongoDBAtlasVectorSearch records itself on the client at construction.
+      db: { client: { appendMetadata() {} } },
       async findOne(filter: Doc) { return store[name].find((d) => matches(d, filter)) ?? null; },
       async findOneAndUpdate(filter: Doc, update: { $set: Doc }) {
         const i = store[name].findIndex((d) => matches(d, filter));

@@ -1,7 +1,8 @@
 import "server-only";
 import type { Db, Document, ObjectId } from "mongodb";
 import { getDb } from "./db";
-import { embed, rerank, withRetry, type RetryOpts } from "./voyage";
+import { embedTexts, searchMemories, VECTOR_LIMIT } from "./vectorstore";
+import { rerank, withRetry, type RetryOpts } from "./voyage";
 import { generateJson } from "./gemini";
 import { stripTimes, timesDiffer } from "./strip-times";
 
@@ -30,8 +31,7 @@ export const STRIPPED_CUTOFF = process.env.STRIPPED_CUTOFF === "off" ? null : Nu
 export const USE_GEMINI_JUDGE = process.env.CLASSIFY_GEMINI !== "0";
 export const JUDGE_MIN = Number(process.env.JUDGE_MIN ?? 0.5);
 
-export const NUM_CANDIDATES = 100;
-export const VECTOR_LIMIT = 20;
+export { NUM_CANDIDATES, VECTOR_LIMIT } from "./vectorstore";
 export const MAX_CANDIDATES = 10; // memories validator: review.candidates maxItems 10
 
 // Candidates come from these scopes only. private is gone (A17); never include it (R24).
@@ -63,7 +63,7 @@ export type Writer = { user_id: string; name: string; role: string };
 
 export type ClassifyDeps = {
   db?: Db;
-  embed?: typeof embed;
+  embed?: typeof embedTexts;
   rerank?: typeof rerank;
   retry?: RetryOpts;
   judge?: (text: string, candidates: { text: string }[]) => Promise<boolean[]>;
@@ -77,15 +77,12 @@ type Hit = Document & { _id: ObjectId; text: string; scope: string; source?: { n
 // Voyage calls retry briefly (withRetry); after that the error propagates, and the caller returns 503 and saves nothing (EDGE-CASES #29).
 export async function classify(text: string, person_id: string, _writer: Writer, deps: ClassifyDeps = {}): Promise<Classified> {
   const db = deps.db ?? (await getDb());
-  const [vector] = await withRetry(() => (deps.embed ?? embed)([text], "document", 5000), "embed", deps.retry);
+  const [vector] = await withRetry(() => (deps.embed ?? embedTexts)([text], "document", 5000), "embed", deps.retry);
 
-  const hits = (await db.collection("memories").aggregate([
-    { $vectorSearch: {
-      index: "memory_vec", path: "embedding", queryVector: vector, numCandidates: NUM_CANDIDATES, limit: VECTOR_LIMIT,
-      filter: { person_id, status: "verified", scope: { $in: CANDIDATE_SCOPES } },
-    } },
-    { $project: { embedding: 0 } },
-  ]).toArray()) as Hit[];
+  const hits = (await searchMemories(
+    db, vector, VECTOR_LIMIT,
+    { person_id, status: "verified", scope: { $in: CANDIDATE_SCOPES } },
+  )).map((hit) => hit.doc) as Hit[];
   if (!hits.length) return { proposed_supersedes: null, candidates: [], embedding: vector };
 
   const ranked = await withRetry(() => (deps.rerank ?? rerank)(text, hits.map((h) => h.text), MAX_CANDIDATES, 5000), "rerank", deps.retry);

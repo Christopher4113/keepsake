@@ -5,7 +5,8 @@ import { getClient, getDb } from "./db";
 import type { ErrorCode } from "./http";
 import { SCHEMA_VERSION, actor, audit, type Scope } from "./memories";
 import { readableScopes } from "./recall";
-import { embed, withRetry, VoyageError } from "./voyage";
+import { embedTexts } from "./vectorstore";
+import { withRetry, VoyageError } from "./voyage";
 import { classify as classifyCandidates } from "./classify";
 import { validate, revalidateFacts, ValidationError, type Fact } from "./validate";
 
@@ -339,7 +340,7 @@ export async function correctMemory(s: Session, id: string, input: MemoryInput):
 
   let embedding: number[];
   try {
-    [embedding] = await withRetry(() => embed([fact.text], "document", 5000), "embed");
+    [embedding] = await withRetry(() => embedTexts([fact.text], "document", 5000), "embed");
   } catch {
     // Never store an empty embedding (R7, EDGE-CASES #29).
     throw new WriteError("unavailable", "The memory check is unavailable right now. Nothing was saved. Please try again.");

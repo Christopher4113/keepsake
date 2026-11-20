@@ -2,7 +2,8 @@ import { ObjectId } from "mongodb";
 import { getDb } from "./db";
 import { SCHEMA_VERSION, SCOPES, type Scope } from "./memories";
 import type { Role, Session } from "./auth";
-import { embed, rerank, VoyageError } from "./voyage";
+import { embedTexts, searchMemories, VECTOR_LIMIT } from "./vectorstore";
+import { rerank, VoyageError } from "./voyage";
 import { isoDate } from "./time";
 import { traceTurn } from "./tracing";
 import { loadGuidance } from "./guidance";
@@ -12,8 +13,6 @@ export const MIN_RERANK_SCORE = Number(process.env.MIN_RERANK_SCORE ?? 0.5);
 // Only used when rerank fails and we fall back to vector order.
 export const MIN_VECTOR_SCORE = Number(process.env.MIN_VECTOR_SCORE ?? 0.7);
 
-const NUM_CANDIDATES = 100;
-const VECTOR_LIMIT = 20;
 const TOP_K = 5;
 
 // A17: Margaret reads family and caregiver, like family. Nothing is private to her, so no private text reaches turns or the trace.
@@ -36,11 +35,11 @@ export type Candidate = {
 // Only verified memories reach the agent; unverified ones wait for family review.
 export async function search(person_id: string, scopes: Scope[], query: string): Promise<{ candidates: Candidate[]; degraded: Degraded }> {
   const filter = { person_id, scope: { $in: scopes }, status: "verified" };
-  const memories = (await getDb()).collection("memories");
+  const db = await getDb();
 
   let vector: number[];
   try {
-    [vector] = await embed([query], "query");
+    [vector] = await embedTexts([query], "query");
   } catch (e) {
     // No vector means no relevance signal. A keyword match here answers "doctor's phone number" with the phone charger,
     // so the agent gets nothing and says it isn't sure.
@@ -50,10 +49,17 @@ export async function search(person_id: string, scopes: Scope[], query: string):
 
   let hits: Candidate[];
   try {
-    hits = await memories.aggregate<Candidate>([
-      { $vectorSearch: { index: "memory_vec", path: "embedding", queryVector: vector, numCandidates: NUM_CANDIDATES, limit: VECTOR_LIMIT, filter } },
-      { $project: { text: 1, scope: 1, status: 1, source: 1, created_at: 1, vector_score: { $meta: "vectorSearchScore" }, rerank_score: null } },
-    ]).toArray();
+    const rows = await searchMemories(db, vector, VECTOR_LIMIT, filter);
+    hits = rows.map(({ doc, score }) => ({
+      _id: doc._id as ObjectId,
+      text: doc.text as string,
+      scope: doc.scope as Scope,
+      status: doc.status as string,
+      source: doc.source as Candidate["source"],
+      created_at: doc.created_at as Date,
+      vector_score: score,
+      rerank_score: null,
+    }));
   } catch (e) {
     // The vector index is building or missing (fresh cluster): keyword match so setup still answers something.
     console.warn("vector search unavailable, using keyword fallback:", (e as Error).message);

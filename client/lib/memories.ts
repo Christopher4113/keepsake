@@ -1,6 +1,6 @@
 import { ObjectId, type ClientSession } from "mongodb";
 import { getDb } from "./db";
-import { embed as voyageEmbed } from "./voyage";
+import { embedTexts } from "./vectorstore";
 import type { Role, Session } from "./auth";
 
 export type Scope = "private" | "family" | "caregiver";
@@ -34,7 +34,7 @@ export async function audit(
 // Best effort: a Voyage failure leaves embedding [] instead of losing the write. scripts/setup-vectors.mjs backfills it.
 export async function embed(id: ObjectId, text: string) {
   try {
-    const [vec] = await voyageEmbed([text], "document");
+    const [vec] = await embedTexts([text], "document");
     await (await getDb()).collection("memories").updateOne({ _id: id }, { $set: { embedding: vec } });
   } catch (e) {
     console.error("embed failed", id.toString(), e);
